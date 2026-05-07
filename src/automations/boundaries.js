@@ -26,6 +26,7 @@ const BOUNDARY_TYPES = ['Hard boundary', 'Preference / comfort request'];
 
 const LIST_THREAD_NAME = 'List of Boundaries';
 const HISTORY_THREAD_NAME = 'Boundary History';
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 const ADD_BOUNDARY_COMMAND = new SlashCommandBuilder()
   .setName('addboundary')
@@ -185,6 +186,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
       prompt: 'Choose a category:',
       customId: 'boundary_add_category',
       values: BOUNDARY_CATEGORIES,
+      timeoutMs: null,
     });
     if (!category) return;
 
@@ -192,6 +194,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
       prompt: 'Choose status:',
       customId: 'boundary_add_status',
       values: BOUNDARY_STATUSES,
+      timeoutMs: null,
     });
     if (!status) return;
 
@@ -199,6 +202,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
       prompt: 'Choose type:',
       customId: 'boundary_add_type',
       values: BOUNDARY_TYPES,
+      timeoutMs: null,
     });
     if (!type) return;
 
@@ -209,7 +213,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
       'What is not okay?',
       'How should we handle mistakes or misunderstandings?',
       'Any notes or context?',
-    ]);
+    ], null);
     if (!collected) return;
     const { answers, messages: responseMessages } = collected;
 
@@ -351,6 +355,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       customId: 'boundary_update_pick',
       values: options,
       prebuilt: true,
+      timeoutMs: null,
     });
 
     if (!selectedId) {
@@ -367,6 +372,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       prompt: 'Choose updated category:',
       customId: 'boundary_update_category',
       values: BOUNDARY_CATEGORIES,
+      timeoutMs: null,
     });
     if (!category) return;
 
@@ -374,6 +380,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       prompt: 'Choose updated status:',
       customId: 'boundary_update_status',
       values: BOUNDARY_STATUSES,
+      timeoutMs: null,
     });
     if (!status) return;
 
@@ -381,6 +388,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       prompt: 'Choose updated type:',
       customId: 'boundary_update_type',
       values: BOUNDARY_TYPES,
+      timeoutMs: null,
     });
     if (!type) return;
 
@@ -391,7 +399,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       'What is not okay?',
       'How should we handle mistakes or misunderstandings?',
       'Any notes or context?',
-    ]);
+    ], null);
     if (!collected) return;
     const { answers, messages: responseMessages } = collected;
 
@@ -422,7 +430,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
     });
 
     const newMessage = await listThread.send({ content: newBoundaryContent, allowedMentions: { parse: [] } });
-    await cleanupCapturedMessages(responseMessages);
+    const cleanupResult = await cleanupCapturedMessages(responseMessages);
 
     try {
       await oldBoundaryMessage.delete();
@@ -434,6 +442,13 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
     }
 
     await interaction.followUp({ content: 'Boundary updated and old version archived 💛', ephemeral: true });
+    if (!cleanupResult.ok) {
+      await interaction.followUp({
+        content:
+          'I updated the boundary, but I could not remove some answer messages. Please give me `Manage Messages` permission in this channel.',
+        ephemeral: true,
+      });
+    }
   } finally {
     activeFlows.delete(interaction.user.id);
   }
@@ -513,7 +528,7 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
     ].join('\n');
 
     await interaction.channel.send({ content: requestMessage, allowedMentions: { parse: [] } });
-    await cleanupCapturedMessages(responseMessages);
+    const cleanupResult = await cleanupCapturedMessages(responseMessages);
 
     if (status === '🟢 Agreed') {
       const boundaryContent = formatBoundaryEntry({
@@ -540,6 +555,13 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
         : 'Boundary request posted for discussion 💛',
       ephemeral: true,
     });
+    if (!cleanupResult.ok) {
+      await interaction.followUp({
+        content:
+          'I posted the request, but I could not remove some answer messages. Please give me `Manage Messages` permission in this channel.',
+        ephemeral: true,
+      });
+    }
   } finally {
     activeFlows.delete(interaction.user.id);
   }
@@ -560,8 +582,7 @@ async function handleReviewBoundaries(interaction, config) {
 function scheduleMonthlyReview(client, config) {
   const schedule = () => {
     const delay = millisUntilNextMonthlyReview(config.timezone);
-
-    setTimeout(async () => {
+    scheduleLongTimeout(async () => {
       await postMonthlyReview(client, config);
       schedule();
     }, delay);
@@ -648,7 +669,7 @@ async function onlyBoundariesReply(interaction) {
 }
 
 async function askChoice(interaction, options) {
-  const { prompt, customId, values, prebuilt = false } = options;
+  const { prompt, customId, values, prebuilt = false, timeoutMs = 120000 } = options;
   const choices = prebuilt
     ? values
     : values.map((value) => ({ label: truncate(value, 100), value }));
@@ -666,10 +687,14 @@ async function askChoice(interaction, options) {
   });
 
   try {
-    const selection = await promptMessage.awaitMessageComponent({
+    const collectorOptions = {
       filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-      time: 120000,
-    });
+    };
+    if (typeof timeoutMs === 'number') {
+      collectorOptions.time = timeoutMs;
+    }
+
+    const selection = await promptMessage.awaitMessageComponent(collectorOptions);
 
     const value = selection.values[0];
     await selection.update({ content: `${prompt}\nSelected: **${truncate(value, 150)}**`, components: [] });
@@ -682,7 +707,7 @@ async function askChoice(interaction, options) {
   }
 }
 
-async function askTextQuestions(interaction, config, questions) {
+async function askTextQuestions(interaction, config, questions, timeoutMs = 5 * 60 * 1000) {
   if (!config.messageContentEnabled) {
     await sendEphemeralPrompt(interaction, {
       content:
@@ -699,12 +724,16 @@ async function askTextQuestions(interaction, config, questions) {
 
     let collected;
     try {
-      collected = await interaction.channel.awaitMessages({
+      const collectorOptions = {
         filter: (message) => message.author.id === interaction.user.id && !message.author.bot,
         max: 1,
-        time: 5 * 60 * 1000,
-        errors: ['time'],
-      });
+      };
+      if (typeof timeoutMs === 'number') {
+        collectorOptions.time = timeoutMs;
+        collectorOptions.errors = ['time'];
+      }
+
+      collected = await interaction.channel.awaitMessages(collectorOptions);
     } catch {
       await sendEphemeralPrompt(interaction, {
         content: 'Boundary flow timed out. You can start again anytime 💛',
@@ -934,6 +963,18 @@ async function cleanupCapturedMessages(messages) {
   }
 
   return { ok: failed === 0, failed };
+}
+
+function scheduleLongTimeout(callback, totalDelayMs) {
+  const safeDelay = Math.max(0, Number(totalDelayMs) || 0);
+  if (safeDelay <= MAX_TIMEOUT_MS) {
+    setTimeout(callback, safeDelay);
+    return;
+  }
+
+  setTimeout(() => {
+    scheduleLongTimeout(callback, safeDelay - MAX_TIMEOUT_MS);
+  }, MAX_TIMEOUT_MS);
 }
 
 function extractLineValue(content, label) {

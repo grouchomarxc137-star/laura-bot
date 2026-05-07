@@ -42,6 +42,7 @@ Optional:
 - Send Messages in Threads
 - View Channels
 - Manage Threads (recommended for update/archive fallback behavior)
+- Manage Messages (required if you want guided answer messages auto-deleted after save/update/request)
 
 ## Commands
 
