@@ -62,6 +62,7 @@ function setupMemoryVault(client) {
     timezone: process.env.TIMEZONE || 'Europe/Rome',
     dailyHour: toSafeNumber(process.env.DAILY_MEMORY_REMINDER_HOUR, 22),
     dailyMinute: toSafeNumber(process.env.DAILY_MEMORY_REMINDER_MINUTE, 0),
+    tagUserIds: parseUserIds(process.env.MEMORY_VAULT_TAG_USER_IDS),
   };
 
   const required = ['CLIENT_ID', 'GUILD_ID', 'MEMORY_VAULT_CHANNEL_ID'];
@@ -511,9 +512,13 @@ async function sendDailyReminder(client, config) {
       return;
     }
 
-    await channel.send(
-      '💛 Memory Vault Time\n\nWhat’s one thing from today worth keeping?\n\nUse /addmemory to save it.\n\nTiny memories count too.',
-    );
+    const mentions =
+      config.tagUserIds.length > 0 ? `${config.tagUserIds.map((id) => `<@${id}>`).join(' ')}\n\n` : '';
+
+    await channel.send({
+      content: `${mentions}💛 Memory Vault Time\n\nWhat’s one thing from today worth keeping?\n\nUse /addmemory to save it.\n\nTiny memories count too.`,
+      allowedMentions: { users: config.tagUserIds, parse: [] },
+    });
   } catch (error) {
     console.error('[memory-vault] Failed to send daily reminder:', error);
   }
@@ -561,12 +566,15 @@ async function postWeeklyRecap(client, config, options = {}) {
 
     for (const memory of sorted) {
       const embed = buildMemoryEmbed(memory, 'Memory');
-      const attachmentLinks = formatAttachmentLinks(memory);
+      const { imageUrls, otherAttachmentLinks } = splitAttachments(memory);
+      if (imageUrls.length > 0) {
+        embed.setImage(imageUrls[0]);
+      }
       const content = [
         `Date: ${formatDateTime(memory.createdAt, config.timezone)}`,
         `Author: **${safeAuthorName(memory.author)}**`,
         `Original message: ${memory.url}`,
-        attachmentLinks ? `Attachments:\n${attachmentLinks}` : null,
+        otherAttachmentLinks ? `Attachments:\n${otherAttachmentLinks}` : null,
       ]
         .filter(Boolean)
         .join('\n');
@@ -576,6 +584,13 @@ async function postWeeklyRecap(client, config, options = {}) {
         embeds: [embed],
         allowedMentions: { parse: [] },
       });
+
+      if (imageUrls.length > 1) {
+        await thread.send({
+          content: imageUrls.slice(1).join('\n'),
+          allowedMentions: { parse: [] },
+        });
+      }
     }
   } catch (error) {
     console.error('[memory-vault] Failed weekly recap:', error);
@@ -659,6 +674,43 @@ function formatAttachmentLinks(message) {
   return message.attachments
     .map((attachment) => `${attachment.name || 'attachment'}: ${attachment.url}`)
     .join('\n');
+}
+
+function splitAttachments(message) {
+  if (!message.attachments || message.attachments.size === 0) {
+    return { imageUrls: [], otherAttachmentLinks: '' };
+  }
+
+  const imageUrls = [];
+  const otherAttachmentLinks = [];
+
+  for (const attachment of message.attachments.values()) {
+    const contentType = `${attachment.contentType || ''}`.toLowerCase();
+    const isImage = contentType.startsWith('image/');
+
+    if (isImage) {
+      imageUrls.push(attachment.url);
+      continue;
+    }
+
+    otherAttachmentLinks.push(`${attachment.name || 'attachment'}: ${attachment.url}`);
+  }
+
+  return {
+    imageUrls,
+    otherAttachmentLinks: otherAttachmentLinks.join('\n'),
+  };
+}
+
+function parseUserIds(raw) {
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => /^\d{16,20}$/.test(part));
 }
 
 function buildWeeklyThreadName(date, timezone) {

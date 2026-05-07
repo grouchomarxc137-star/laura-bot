@@ -29,6 +29,7 @@ Optional:
 - `DAILY_MEMORY_REMINDER_HOUR` (default: `22`)
 - `DAILY_MEMORY_REMINDER_MINUTE` (default: `0`)
 - `ENABLE_MESSAGE_CONTENT_INTENT` (`true` to enable full text memory capture)
+- `MEMORY_VAULT_TAG_USER_IDS` (comma-separated Discord user IDs to mention in daily reminder, e.g. `123...,456...`)
 
 ## Discord permissions needed
 
