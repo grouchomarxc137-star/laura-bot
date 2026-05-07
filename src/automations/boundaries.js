@@ -2,6 +2,7 @@ const {
   ActionRowBuilder,
   ChannelType,
   Events,
+  MessageFlags,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -123,7 +124,7 @@ function setupBoundaries(client) {
       console.error('[boundaries] Interaction error:', error);
       await safeReply(interaction, {
         content: 'Something went wrong. Please try again in a moment.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   });
@@ -166,7 +167,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
   if (activeFlows.has(interaction.user.id)) {
     await interaction.reply({
       content: 'You already have an active boundary flow. Finish it first or wait for timeout 💛',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -176,7 +177,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
   try {
     const channel = await getBoundariesChannel(interaction.client, config.boundariesChannelId);
     if (!channel) {
-      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', ephemeral: true });
+      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -234,12 +235,12 @@ async function handleAddBoundary(interaction, config, activeFlows) {
 
     await listThread.send({ content: boundaryContent, allowedMentions: { parse: [] } });
     const cleanupResult = await cleanupCapturedMessages(responseMessages);
-    await interaction.followUp({ content: 'Boundary added to the list 💛', ephemeral: true });
+    await interaction.followUp({ content: 'Boundary added to the list 💛', flags: MessageFlags.Ephemeral });
     if (!cleanupResult.ok) {
       await interaction.followUp({
         content:
           'I saved the boundary, but I could not remove some answer messages. Check that I have permission to manage messages in this channel.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   } finally {
@@ -255,7 +256,7 @@ async function handleBoundaryList(interaction, config) {
 
   const channel = await getBoundariesChannel(interaction.client, config.boundariesChannelId);
   if (!channel) {
-    await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', ephemeral: true });
+    await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -280,7 +281,7 @@ async function handleBoundaryList(interaction, config) {
     : boundaries.filter((message) => message.content.includes(`Category: ${selected}`));
 
   if (filtered.length === 0) {
-    await interaction.followUp({ content: 'Nothing found for this category yet 💛', ephemeral: true });
+    await interaction.followUp({ content: 'Nothing found for this category yet 💛', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -304,7 +305,7 @@ async function handleBoundaryList(interaction, config) {
       '',
       lines.join('\n\n'),
     ].join('\n'),
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
 }
@@ -318,7 +319,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
   if (activeFlows.has(interaction.user.id)) {
     await interaction.reply({
       content: 'You already have an active boundary flow. Finish it first or wait for timeout 💛',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -328,7 +329,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
   try {
     const channel = await getBoundariesChannel(interaction.client, config.boundariesChannelId);
     if (!channel) {
-      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', ephemeral: true });
+      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -339,7 +340,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
 
     if (boundaries.length === 0) {
-      await interaction.reply({ content: 'No boundaries found to update yet 💛', ephemeral: true });
+      await interaction.reply({ content: 'No boundaries found to update yet 💛', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -364,7 +365,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
 
     const oldBoundaryMessage = boundaries.find((message) => message.id === selectedId);
     if (!oldBoundaryMessage) {
-      await interaction.followUp({ content: 'Could not find that boundary anymore. Try again 💛', ephemeral: true });
+      await interaction.followUp({ content: 'Could not find that boundary anymore. Try again 💛', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -441,12 +442,12 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       );
     }
 
-    await interaction.followUp({ content: 'Boundary updated and old version archived 💛', ephemeral: true });
+    await interaction.followUp({ content: 'Boundary updated and old version archived 💛', flags: MessageFlags.Ephemeral });
     if (!cleanupResult.ok) {
       await interaction.followUp({
         content:
           'I updated the boundary, but I could not remove some answer messages. Please give me `Manage Messages` permission in this channel.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   } finally {
@@ -463,7 +464,7 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
   if (activeFlows.has(interaction.user.id)) {
     await interaction.reply({
       content: 'You already have an active boundary flow. Finish it first or wait for timeout 💛',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -473,7 +474,7 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
   try {
     const channel = await getBoundariesChannel(interaction.client, config.boundariesChannelId);
     if (!channel) {
-      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', ephemeral: true });
+      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -553,13 +554,13 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
       content: status === '🟢 Agreed'
         ? 'Boundary request posted and added to the list 💛'
         : 'Boundary request posted for discussion 💛',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     if (!cleanupResult.ok) {
       await interaction.followUp({
         content:
           'I posted the request, but I could not remove some answer messages. Please give me `Manage Messages` permission in this channel.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   } finally {
@@ -664,7 +665,7 @@ function isInBoundariesChannel(interaction, config) {
 async function onlyBoundariesReply(interaction) {
   await interaction.reply({
     content: 'This command is only for the Boundaries channel 💛',
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -750,31 +751,48 @@ async function askTextQuestions(interaction, config, questions, timeoutMs = 5 * 
 }
 
 function formatBoundaryEntry(entry) {
-  return [
-    `🧭 Boundary: ${toText(entry.title)}`,
-    `Category: ${toText(entry.category)}`,
-    `Status: ${toText(entry.status)}`,
-    `Type: ${toText(entry.type)}`,
-    `Added by: ${toText(entry.addedBy)}`,
-    `Added on: ${toText(entry.date)}`,
+  const data = {
+    title: fitText(entry.title, 120),
+    category: fitText(entry.category, 80),
+    status: fitText(entry.status, 60),
+    type: fitText(entry.type, 80),
+    addedBy: fitText(entry.addedBy, 80),
+    date: fitText(entry.date, 80),
+    why: fitText(entry.why, 260),
+    okay: fitText(entry.okay, 260),
+    notOkay: fitText(entry.notOkay, 260),
+    handling: fitText(entry.handling, 260),
+    notes: fitText(entry.notes, 220),
+    originalDiscussion: fitText(entry.originalDiscussion, 180),
+  };
+
+  const content = [
+    `🧭 Boundary: ${toText(data.title)}`,
+    `Category: ${toText(data.category)}`,
+    `Status: ${toText(data.status)}`,
+    `Type: ${toText(data.type)}`,
+    `Added by: ${toText(data.addedBy)}`,
+    `Added on: ${toText(data.date)}`,
     '',
     'Why it matters:',
-    toText(entry.why),
+    toText(data.why),
     '',
     'What is okay:',
-    toText(entry.okay),
+    toText(data.okay),
     '',
     'What is not okay:',
-    toText(entry.notOkay),
+    toText(data.notOkay),
     '',
     'Handling mistakes/misunderstandings:',
-    toText(entry.handling),
+    toText(data.handling),
     '',
     'Notes/context:',
-    toText(entry.notes),
+    toText(data.notes),
     '',
-    `Original discussion: ${toText(entry.originalDiscussion)}`,
+    `Original discussion: ${toText(data.originalDiscussion)}`,
   ].join('\n');
+
+  return fitText(content, 1990);
 }
 
 function isBoundaryEntry(content) {
@@ -940,11 +958,12 @@ async function safeReply(interaction, payload) {
 }
 
 async function sendEphemeralPrompt(interaction, payload) {
-  const fullPayload = { ...payload, ephemeral: true, fetchReply: true };
+  const fullPayload = { ...payload, flags: MessageFlags.Ephemeral };
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp(fullPayload);
   }
-  return interaction.reply(fullPayload);
+  await interaction.reply(fullPayload);
+  return interaction.fetchReply();
 }
 
 async function cleanupCapturedMessages(messages) {
@@ -985,6 +1004,14 @@ function extractLineValue(content, label) {
     return '';
   }
   return line.slice(label.length + 1).trim();
+}
+
+function fitText(value, maxLength) {
+  const text = toText(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 14))}...[trimmed]`;
 }
 
 module.exports = {
