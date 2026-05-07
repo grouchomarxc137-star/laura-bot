@@ -46,6 +46,14 @@ const RANDOM_MEMORY_COMMAND = new SlashCommandBuilder()
   .setName('randommemory')
   .setDescription('Show a random memory from the Memory Vault');
 
+const TEST_WEEKLY_RECAP_COMMAND = new SlashCommandBuilder()
+  .setName('testweeklyrecap')
+  .setDescription('Force-run the weekly recap now (for testing)');
+
+const TEST_DAILY_REMINDER_COMMAND = new SlashCommandBuilder()
+  .setName('testdailyreminder')
+  .setDescription('Send the daily reminder now (for testing)');
+
 function setupMemoryVault(client) {
   const config = {
     clientId: process.env.CLIENT_ID,
@@ -58,14 +66,22 @@ function setupMemoryVault(client) {
 
   const required = ['CLIENT_ID', 'GUILD_ID', 'MEMORY_VAULT_CHANNEL_ID'];
   const missing = required.filter((name) => !process.env[name]);
+  const isConfigured = missing.length === 0;
   if (missing.length > 0) {
-    console.error(`[memory-vault] Missing required environment variables: ${missing.join(', ')}`);
+    console.error(
+      `[memory-vault] Missing required environment variables: ${missing.join(', ')}. Memory Vault automation is disabled until these are set.`,
+    );
   }
 
   let dailyTimer = null;
   let weeklyTimer = null;
 
   client.once(Events.ClientReady, async () => {
+    if (!isConfigured) {
+      console.warn('[memory-vault] Skipping setup because required env vars are missing.');
+      return;
+    }
+
     await registerCommands(client, config);
     scheduleDailyReminder(client, config, () => (dailyTimer = null), (timer) => (dailyTimer = timer));
     scheduleWeeklyRecap(client, config, () => (weeklyTimer = null), (timer) => (weeklyTimer = timer));
@@ -76,6 +92,10 @@ function setupMemoryVault(client) {
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
+    if (!isConfigured) {
+      return;
+    }
+
     try {
       if (!interaction.isChatInputCommand()) {
         return;
@@ -88,6 +108,14 @@ function setupMemoryVault(client) {
       if (interaction.commandName === 'randommemory') {
         await handleRandomMemory(interaction, config);
       }
+
+      if (interaction.commandName === 'testweeklyrecap') {
+        await handleTestWeeklyRecap(interaction, config);
+      }
+
+      if (interaction.commandName === 'testdailyreminder') {
+        await handleTestDailyReminder(interaction, config);
+      }
     } catch (error) {
       console.error('[memory-vault] Interaction handling error:', error);
       await safeReply(interaction, {
@@ -98,6 +126,10 @@ function setupMemoryVault(client) {
   });
 
   client.on(Events.MessageReactionAdd, async (reaction, user) => {
+    if (!isConfigured) {
+      return;
+    }
+
     await handleFavoriteReaction(reaction, user, config);
   });
 
@@ -115,9 +147,16 @@ async function registerCommands(client, config) {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
     await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), {
-      body: [ADD_MEMORY_COMMAND.toJSON(), RANDOM_MEMORY_COMMAND.toJSON()],
+      body: [
+        ADD_MEMORY_COMMAND.toJSON(),
+        RANDOM_MEMORY_COMMAND.toJSON(),
+        TEST_WEEKLY_RECAP_COMMAND.toJSON(),
+        TEST_DAILY_REMINDER_COMMAND.toJSON(),
+      ],
     });
-    console.log('[memory-vault] Slash commands registered: /addmemory, /randommemory');
+    console.log(
+      '[memory-vault] Slash commands registered: /addmemory, /randommemory, /testweeklyrecap, /testdailyreminder',
+    );
   } catch (error) {
     console.error('[memory-vault] Failed to register slash commands:', error);
   }
@@ -290,6 +329,40 @@ async function handleRandomMemory(interaction, config) {
   });
 }
 
+async function handleTestWeeklyRecap(interaction, config) {
+  if (interaction.channelId !== config.memoryVaultChannelId) {
+    await interaction.reply({
+      content: 'This command is only for the Memory Vault 💛',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    content: 'Running weekly recap test now. I will create a recap thread from the last 7 days.',
+    ephemeral: true,
+  });
+
+  await postWeeklyRecap(interaction.client, config, { force: true });
+}
+
+async function handleTestDailyReminder(interaction, config) {
+  if (interaction.channelId !== config.memoryVaultChannelId) {
+    await interaction.reply({
+      content: 'This command is only for the Memory Vault 💛',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    content: 'Sending daily reminder test now 💛',
+    ephemeral: true,
+  });
+
+  await sendDailyReminder(interaction.client, config);
+}
+
 async function handleFavoriteReaction(reaction, user, config) {
   try {
     if (user.bot) {
@@ -446,13 +519,15 @@ async function sendDailyReminder(client, config) {
   }
 }
 
-async function postWeeklyRecap(client, config) {
+async function postWeeklyRecap(client, config, options = {}) {
+  const { force = false } = options;
+
   try {
     const now = new Date();
     const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: config.timezone }).format(now);
     const hour = Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: config.timezone }).format(now));
 
-    if (weekday !== 'Sunday' || hour !== 22) {
+    if (!force && (weekday !== 'Sunday' || hour !== 22)) {
       return;
     }
 

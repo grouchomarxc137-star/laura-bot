@@ -28,6 +28,7 @@ Optional:
 - `TIMEZONE` (default: `Europe/Rome`)
 - `DAILY_MEMORY_REMINDER_HOUR` (default: `22`)
 - `DAILY_MEMORY_REMINDER_MINUTE` (default: `0`)
+- `ENABLE_MESSAGE_CONTENT_INTENT` (`true` to enable full text memory capture)
 
 ## Discord permissions needed
 
@@ -52,6 +53,15 @@ Optional:
   - Fetches recent channel history (up to around 500 messages).
   - Ignores bot/empty/command-like messages.
   - Posts one random valid memory with author/date/content/attachments/original link.
+
+- `/testweeklyrecap`
+  - Works only in `MEMORY_VAULT_CHANNEL_ID`.
+  - Force-runs weekly recap immediately for testing.
+  - Creates the weekly recap thread and posts last 7 days of memories.
+
+- `/testdailyreminder`
+  - Works only in `MEMORY_VAULT_CHANNEL_ID`.
+  - Sends the daily reminder message immediately for testing.
 
 ## Memory Vault behavior
 
@@ -82,6 +92,7 @@ Tiny memories count too.
 ## Railway deployment notes
 
 - Set all required environment variables in Railway project settings.
+- If you set `ENABLE_MESSAGE_CONTENT_INTENT=true`, also enable **Message Content Intent** in the Discord Developer Portal (`Bot` tab), otherwise login may fail with `Used disallowed intents`.
 - Ensure bot has the required permissions in your Discord server/channel.
 - Deploy from GitHub as usual; startup command can be default `node index.js`.
 - Slash commands are registered to the configured guild at startup.

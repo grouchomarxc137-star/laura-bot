@@ -15,10 +15,16 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent,
+    ...(process.env.ENABLE_MESSAGE_CONTENT_INTENT === 'true' ? [GatewayIntentBits.MessageContent] : []),
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
+
+if (process.env.ENABLE_MESSAGE_CONTENT_INTENT !== 'true') {
+  console.warn(
+    '[startup] ENABLE_MESSAGE_CONTENT_INTENT is not true. Text-content memory features may be limited until enabled.',
+  );
+}
 
 setupMemoryVault(client);
 
@@ -27,6 +33,11 @@ client.once('ready', () => {
 });
 
 client.login(process.env.DISCORD_TOKEN).catch((error) => {
+  if (`${error?.message || ''}`.includes('Used disallowed intents')) {
+    console.error(
+      '[startup] Login failed: disallowed intents. If you want text memory capture, enable Message Content Intent in the Discord Developer Portal and set ENABLE_MESSAGE_CONTENT_INTENT=true.',
+    );
+  }
   console.error('[startup] Failed to log in:', error);
   process.exit(1);
 });
