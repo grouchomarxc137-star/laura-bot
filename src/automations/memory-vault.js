@@ -414,14 +414,17 @@ async function handleFavoriteReaction(reaction, user, config) {
     }
 
     const embed = buildMemoryEmbed(message, '⭐ Favorite Memory');
-    const attachmentLinks = formatAttachmentLinks(message);
+    const { imageUrls, otherAttachmentLinks } = splitAttachments(message);
+    if (imageUrls.length > 0) {
+      embed.setImage(imageUrls[0]);
+    }
 
     const body = [
       `Favorited by: **${safeAuthorName(user)}**`,
       `Original author: **${safeAuthorName(message.author)}**`,
       `Original date: ${formatDateTime(message.createdAt, process.env.TIMEZONE || 'Europe/Rome')}`,
       `Original message: ${originalUrl}`,
-      attachmentLinks ? `Attachments:\n${attachmentLinks}` : null,
+      otherAttachmentLinks ? `Attachments:\n${otherAttachmentLinks}` : null,
     ]
       .filter(Boolean)
       .join('\n');
@@ -431,6 +434,13 @@ async function handleFavoriteReaction(reaction, user, config) {
       embeds: [embed],
       allowedMentions: { parse: [] },
     });
+
+    if (imageUrls.length > 1) {
+      await favoritesThread.send({
+        content: imageUrls.slice(1).join('\n'),
+        allowedMentions: { parse: [] },
+      });
+    }
   } catch (error) {
     console.error('[memory-vault] Failed to handle ⭐ favorite reaction:', error);
   }
