@@ -229,8 +229,15 @@ async function handleAddBoundary(interaction, config, activeFlows) {
     });
 
     await listThread.send({ content: boundaryContent, allowedMentions: { parse: [] } });
-    await cleanupCapturedMessages(responseMessages);
+    const cleanupResult = await cleanupCapturedMessages(responseMessages);
     await interaction.followUp({ content: 'Boundary added to the list 💛', ephemeral: true });
+    if (!cleanupResult.ok) {
+      await interaction.followUp({
+        content:
+          'I saved the boundary, but I could not remove some answer messages. Check that I have permission to manage messages in this channel.',
+        ephemeral: true,
+      });
+    }
   } finally {
     activeFlows.delete(interaction.user.id);
   }
@@ -273,14 +280,26 @@ async function handleBoundaryList(interaction, config) {
     return;
   }
 
-  const lines = filtered.slice(-20).map((message) => {
-    const titleLine = (message.content.split('\n').find((line) => line.startsWith('🧭 Boundary:')) || '🧭 Boundary: Untitled').replace('🧭 Boundary:', '').trim();
-    const categoryLine = message.content.split('\n').find((line) => line.startsWith('Category:')) || 'Category: Unknown';
-    return `• ${titleLine} | ${categoryLine.replace('Category: ', '')} | ${message.url}`;
+  const lines = filtered.slice(-20).map((message, index) => {
+    const title = extractBoundaryTitle(message.content) || 'Untitled';
+    const category = extractLineValue(message.content, 'Category') || 'Unknown';
+    const status = extractLineValue(message.content, 'Status') || 'Unknown';
+    const type = extractLineValue(message.content, 'Type') || 'Unknown';
+
+    return [
+      `**${index + 1}. 🧭 ${title}**`,
+      `Category: ${category} | Status: ${status} | Type: ${type}`,
+    ].join('\n');
   });
 
   await interaction.followUp({
-    content: `Boundaries for **${selected}** (showing up to 20 latest):\n${lines.join('\n')}`,
+    content: [
+      `## Boundary List`,
+      `Filter: **${selected}**`,
+      `Showing latest ${Math.min(filtered.length, 20)} of ${filtered.length}`,
+      '',
+      lines.join('\n\n'),
+    ].join('\n'),
     ephemeral: true,
     allowedMentions: { parse: [] },
   });
@@ -900,6 +919,8 @@ async function sendEphemeralPrompt(interaction, payload) {
 }
 
 async function cleanupCapturedMessages(messages) {
+  let failed = 0;
+
   for (const message of messages) {
     if (!message) {
       continue;
@@ -908,9 +929,21 @@ async function cleanupCapturedMessages(messages) {
     try {
       await message.delete();
     } catch {
-      // Ignore when missing permission or message already removed.
+      failed += 1;
     }
   }
+
+  return { ok: failed === 0, failed };
+}
+
+function extractLineValue(content, label) {
+  const line = content
+    .split('\n')
+    .find((candidate) => candidate.toLowerCase().startsWith(`${label.toLowerCase()}:`));
+  if (!line) {
+    return '';
+  }
+  return line.slice(label.length + 1).trim();
 }
 
 module.exports = {
