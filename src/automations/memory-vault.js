@@ -147,14 +147,21 @@ async function registerCommands(client, config) {
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), {
-      body: [
-        ADD_MEMORY_COMMAND.toJSON(),
-        RANDOM_MEMORY_COMMAND.toJSON(),
-        TEST_WEEKLY_RECAP_COMMAND.toJSON(),
-        TEST_DAILY_REMINDER_COMMAND.toJSON(),
-      ],
-    });
+    const route = Routes.applicationGuildCommands(config.clientId, config.guildId);
+    const existing = await rest.get(route);
+    const incoming = [
+      ADD_MEMORY_COMMAND.toJSON(),
+      RANDOM_MEMORY_COMMAND.toJSON(),
+      TEST_WEEKLY_RECAP_COMMAND.toJSON(),
+      TEST_DAILY_REMINDER_COMMAND.toJSON(),
+    ];
+    const incomingNames = new Set(incoming.map((command) => command.name));
+    const merged = [
+      ...existing.filter((command) => !incomingNames.has(command.name)),
+      ...incoming,
+    ];
+
+    await rest.put(route, { body: merged });
     console.log(
       '[memory-vault] Slash commands registered: /addmemory, /randommemory, /testweeklyrecap, /testdailyreminder',
     );

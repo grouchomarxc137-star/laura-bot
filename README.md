@@ -22,6 +22,7 @@ Required:
 - `CLIENT_ID`
 - `GUILD_ID`
 - `MEMORY_VAULT_CHANNEL_ID`
+- `BOUNDARIES_CHANNEL_ID`
 
 Optional:
 
@@ -40,6 +41,7 @@ Optional:
 - Create Public Threads
 - Send Messages in Threads
 - View Channels
+- Manage Threads (recommended for update/archive fallback behavior)
 
 ## Commands
 
@@ -63,6 +65,26 @@ Optional:
 - `/testdailyreminder`
   - Works only in `MEMORY_VAULT_CHANNEL_ID`.
   - Sends the daily reminder message immediately for testing.
+
+- `/addboundary`
+  - Works only in `BOUNDARIES_CHANNEL_ID`.
+  - Guided boundary flow and saves entry into `List of Boundaries` thread.
+
+- `/boundarylist`
+  - Works only in `BOUNDARIES_CHANNEL_ID`.
+  - Lets you pick category (or all categories) and lists matching boundaries from `List of Boundaries`.
+
+- `/updateboundary`
+  - Works only in `BOUNDARIES_CHANNEL_ID`.
+  - Archives old version to `Boundary History`, then posts updated boundary.
+
+- `/boundaryrequest`
+  - Works only in `BOUNDARIES_CHANNEL_ID`.
+  - Posts a gentle discussion request. If status is `🟢 Agreed`, also adds to `List of Boundaries`.
+
+- `/reviewboundaries`
+  - Works only in `BOUNDARIES_CHANNEL_ID`.
+  - Posts the guided boundary review prompt in channel.
 
 ## Memory Vault behavior
 
@@ -89,6 +111,13 @@ Tiny memories count too.
   - Bot copies memory into `Favorite Memories` thread (creates it if needed),
   - Includes favorited by, original author/date/link, text and attachments,
   - Avoids duplicates by checking recent thread messages for the original URL.
+
+## Boundaries behavior
+
+- Boundaries are stored as Discord messages inside the `List of Boundaries` thread.
+- Old versions are archived in `Boundary History`.
+- No database is used.
+- Monthly review reminder posts automatically on the first Sunday of each month at 21:00 (`TIMEZONE` or default `Europe/Rome`).
 
 ## Railway deployment notes
 
