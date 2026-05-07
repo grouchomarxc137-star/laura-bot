@@ -53,6 +53,7 @@ function setupBoundaries(client) {
     guildId: process.env.GUILD_ID,
     boundariesChannelId: process.env.BOUNDARIES_CHANNEL_ID,
     timezone: process.env.TIMEZONE || 'Europe/Rome',
+    messageContentEnabled: process.env.ENABLE_MESSAGE_CONTENT_INTENT === 'true',
   };
 
   const required = ['CLIENT_ID', 'GUILD_ID', 'BOUNDARIES_CHANNEL_ID'];
@@ -85,6 +86,11 @@ function setupBoundaries(client) {
 
     scheduleMonthlyReview(client, config);
     console.log('[boundaries] Ready | monthly review=First Sunday 21:00');
+    if (!config.messageContentEnabled) {
+      console.warn(
+        '[boundaries] ENABLE_MESSAGE_CONTENT_INTENT is not true. Guided text answers may be empty. Enable Message Content Intent for boundaries flows.',
+      );
+    }
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -196,7 +202,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
     });
     if (!type) return;
 
-    const answers = await askTextQuestions(interaction, [
+    const collected = await askTextQuestions(interaction, config, [
       'What is the boundary?',
       'Why does it matter?',
       'What is okay?',
@@ -204,7 +210,8 @@ async function handleAddBoundary(interaction, config, activeFlows) {
       'How should we handle mistakes or misunderstandings?',
       'Any notes or context?',
     ]);
-    if (!answers) return;
+    if (!collected) return;
+    const { answers, messages: responseMessages } = collected;
 
     const boundaryContent = formatBoundaryEntry({
       title: answers[0],
@@ -222,6 +229,7 @@ async function handleAddBoundary(interaction, config, activeFlows) {
     });
 
     await listThread.send({ content: boundaryContent, allowedMentions: { parse: [] } });
+    await cleanupCapturedMessages(responseMessages);
     await interaction.followUp({ content: 'Boundary added to the list 💛', ephemeral: true });
   } finally {
     activeFlows.delete(interaction.user.id);
@@ -357,7 +365,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
     });
     if (!type) return;
 
-    const answers = await askTextQuestions(interaction, [
+    const collected = await askTextQuestions(interaction, config, [
       'What is the boundary?',
       'Why does it matter?',
       'What is okay?',
@@ -365,7 +373,8 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
       'How should we handle mistakes or misunderstandings?',
       'Any notes or context?',
     ]);
-    if (!answers) return;
+    if (!collected) return;
+    const { answers, messages: responseMessages } = collected;
 
     const archiveMessage = [
       '📜 Archived Boundary Version',
@@ -394,6 +403,7 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
     });
 
     const newMessage = await listThread.send({ content: newBoundaryContent, allowedMentions: { parse: [] } });
+    await cleanupCapturedMessages(responseMessages);
 
     try {
       await oldBoundaryMessage.delete();
@@ -456,7 +466,7 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
     });
     if (!status) return;
 
-    const answers = await askTextQuestions(interaction, [
+    const collected = await askTextQuestions(interaction, config, [
       'What situation makes you uncomfortable?',
       'What feeling does it trigger?',
       'What are you afraid this could mean?',
@@ -464,7 +474,8 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
       'What possible middle ground could exist?',
       'Is there anything you want your partner to understand?',
     ]);
-    if (!answers) return;
+    if (!collected) return;
+    const { answers, messages: responseMessages } = collected;
 
     const requestMessage = [
       '🟡 Boundary Request',
@@ -483,6 +494,7 @@ async function handleBoundaryRequest(interaction, config, activeFlows) {
     ].join('\n');
 
     await interaction.channel.send({ content: requestMessage, allowedMentions: { parse: [] } });
+    await cleanupCapturedMessages(responseMessages);
 
     if (status === '🟢 Agreed') {
       const boundaryContent = formatBoundaryEntry({
@@ -651,8 +663,17 @@ async function askChoice(interaction, options) {
   }
 }
 
-async function askTextQuestions(interaction, questions) {
+async function askTextQuestions(interaction, config, questions) {
+  if (!config.messageContentEnabled) {
+    await sendEphemeralPrompt(interaction, {
+      content:
+        'I need Message Content Intent enabled to read your text answers. Set `ENABLE_MESSAGE_CONTENT_INTENT=true` and enable it in Discord Developer Portal.',
+    });
+    return null;
+  }
+
   const answers = [];
+  const messages = [];
 
   for (const question of questions) {
     await sendEphemeralPrompt(interaction, { content: question });
@@ -672,10 +693,12 @@ async function askTextQuestions(interaction, questions) {
       return null;
     }
 
-    answers.push(collected.first()?.content || '');
+    const responseMessage = collected.first();
+    answers.push(responseMessage?.content || '');
+    messages.push(responseMessage);
   }
 
-  return answers;
+  return { answers, messages };
 }
 
 function formatBoundaryEntry(entry) {
@@ -874,6 +897,20 @@ async function sendEphemeralPrompt(interaction, payload) {
     return interaction.followUp(fullPayload);
   }
   return interaction.reply(fullPayload);
+}
+
+async function cleanupCapturedMessages(messages) {
+  for (const message of messages) {
+    if (!message) {
+      continue;
+    }
+
+    try {
+      await message.delete();
+    } catch {
+      // Ignore when missing permission or message already removed.
+    }
+  }
 }
 
 module.exports = {

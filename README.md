@@ -123,6 +123,7 @@ Tiny memories count too.
 
 - Set all required environment variables in Railway project settings.
 - If you set `ENABLE_MESSAGE_CONTENT_INTENT=true`, also enable **Message Content Intent** in the Discord Developer Portal (`Bot` tab), otherwise login may fail with `Used disallowed intents`.
+- Boundaries guided text flows (`/addboundary`, `/updateboundary`, `/boundaryrequest`) require `ENABLE_MESSAGE_CONTENT_INTENT=true` plus Message Content Intent enabled in the Discord Developer Portal.
 - Ensure bot has the required permissions in your Discord server/channel.
 - Deploy from GitHub as usual; startup command can be default `node index.js`.
 - Slash commands are registered to the configured guild at startup.
