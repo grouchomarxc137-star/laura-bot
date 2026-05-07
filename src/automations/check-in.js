@@ -1,0 +1,676 @@
+const {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  Events,
+  MessageFlags,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  StringSelectMenuBuilder,
+} = require('discord.js');
+
+const CHECKIN_COMMAND = new SlashCommandBuilder().setName('checkin').setDescription('Post today\'s daily check-in panel');
+const MY_CHECKIN_COMMAND = new SlashCommandBuilder().setName('mycheckin').setDescription('Start your check-in for today\'s panel');
+const CHECKIN_STATUS_COMMAND = new SlashCommandBuilder().setName('checkinstatus').setDescription('Show today\'s check-in status');
+
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+const MOOD_OPTIONS = [
+  { label: '😊 Good', value: '😊 Good' },
+  { label: '😌 Calm', value: '😌 Calm' },
+  { label: '😴 Tired', value: '😴 Tired' },
+  { label: '😕 Off / weird', value: '😕 Off / weird' },
+  { label: '😰 Anxious', value: '😰 Anxious' },
+  { label: '😔 Sad', value: '😔 Sad' },
+  { label: '😡 Irritated', value: '😡 Irritated' },
+  { label: '💔 Overwhelmed', value: '💔 Overwhelmed' },
+];
+
+const SUPPORT_OPTIONS = [
+  { label: '🫂 Comfort', value: '🫂 Comfort' },
+  { label: '💞 Reassurance', value: '💞 Reassurance' },
+  { label: '🧠 Perspective', value: '🧠 Perspective' },
+  { label: '🛠 Help / solutions', value: '🛠 Help / solutions' },
+  { label: '🌫 Just expressing', value: '🌫 Just expressing' },
+  { label: '⏳ Space / time', value: '⏳ Space / time' },
+  { label: '❌ Skip support preference', value: '❌ Skip support preference' },
+];
+
+const SUPPORT_IDEA_BY_PREF = {
+  '🫂 Comfort': 'Ask softly: “What would feel comforting right now?”',
+  '💞 Reassurance': 'Offer reassurance without forcing a big discussion.',
+  '🧠 Perspective': 'Ask first: “Do you want my honest perspective?”',
+  '🛠 Help / solutions': 'Offer practical help or ask: “What can I help solve?”',
+  '🌫 Just expressing': 'No fixing needed. Just make them feel heard.',
+  '⏳ Space / time': 'Respect space while reassuring them you\'re still there.',
+  '❌ Skip support preference': 'No support preference selected. A gentle check-in is enough.',
+};
+
+function setupCheckIn(client) {
+  const config = {
+    clientId: process.env.CLIENT_ID,
+    guildId: process.env.GUILD_ID,
+    channelId: process.env.CHECKIN_CHANNEL_ID,
+    partner1Id: process.env.PARTNER_1_USER_ID,
+    partner1Name: process.env.PARTNER_1_NAME || 'Partner 1',
+    partner2Id: process.env.PARTNER_2_USER_ID,
+    partner2Name: process.env.PARTNER_2_NAME || 'Partner 2',
+    timezone: process.env.TIMEZONE || 'Europe/Rome',
+    hour: toSafeNumber(process.env.DAILY_CHECKIN_HOUR, 21),
+    minute: toSafeNumber(process.env.DAILY_CHECKIN_MINUTE, 0),
+  };
+
+  const required = ['CLIENT_ID', 'GUILD_ID', 'CHECKIN_CHANNEL_ID', 'PARTNER_1_USER_ID', 'PARTNER_2_USER_ID'];
+  const missing = required.filter((key) => !process.env[key]);
+  const isConfigured = missing.length === 0;
+
+  if (!isConfigured) {
+    console.error(
+      `[check-in] Missing required environment variables: ${missing.join(', ')}. Check-in automation is disabled until these are set.`,
+    );
+  }
+
+  client.once(Events.ClientReady, async () => {
+    if (!isConfigured) {
+      console.warn('[check-in] Skipping setup because required env vars are missing.');
+      return;
+    }
+
+    await registerCheckInCommands(config);
+    scheduleDailyCheckIn(client, config);
+
+    console.log(
+      `[check-in] Ready | channel=${config.channelId} daily=${String(config.hour).padStart(2, '0')}:${String(config.minute).padStart(2, '0')} timezone=${config.timezone}`,
+    );
+  });
+
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!isConfigured) {
+      return;
+    }
+
+    try {
+      if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'checkin') {
+          await handleCheckInCommand(interaction, config);
+          return;
+        }
+
+        if (interaction.commandName === 'mycheckin') {
+          await handleMyCheckInCommand(interaction, config);
+          return;
+        }
+
+        if (interaction.commandName === 'checkinstatus') {
+          await handleCheckInStatusCommand(interaction, config);
+          return;
+        }
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith('checkin_do')) {
+        await handleCheckInButton(interaction, config);
+      }
+    } catch (error) {
+      console.error('[check-in] Interaction error:', error);
+      await safeReply(interaction, {
+        content: 'Something went wrong. Please try again in a moment.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+  });
+}
+
+async function registerCheckInCommands(config) {
+  if (!process.env.DISCORD_TOKEN || !config.clientId || !config.guildId) {
+    console.warn('[check-in] Skipping command registration due to missing token/client/guild env vars.');
+    return;
+  }
+
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  const route = Routes.applicationGuildCommands(config.clientId, config.guildId);
+
+  try {
+    const existing = await rest.get(route);
+    const incoming = [CHECKIN_COMMAND.toJSON(), MY_CHECKIN_COMMAND.toJSON(), CHECKIN_STATUS_COMMAND.toJSON()];
+    const incomingNames = new Set(incoming.map((command) => command.name));
+    const merged = [...existing.filter((command) => !incomingNames.has(command.name)), ...incoming];
+
+    await rest.put(route, { body: merged });
+    console.log('[check-in] Slash commands registered: /checkin, /mycheckin, /checkinstatus');
+  } catch (error) {
+    console.error('[check-in] Failed to register slash commands:', error);
+  }
+}
+
+async function handleCheckInCommand(interaction, config) {
+  if (interaction.channelId !== config.channelId) {
+    await interaction.reply({
+      content: 'This command is only for the check-in channel 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getCheckInChannel(interaction.client, config.channelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Check-in channel not found. Check CHECKIN_CHANNEL_ID.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const panel = await findTodayPanel(channel, config);
+  if (panel) {
+    await interaction.reply({
+      content: 'Today\'s check-in panel already exists 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await postDailyPanel(channel, config);
+  await interaction.reply({ content: 'Today\'s check-in panel posted 💛', flags: MessageFlags.Ephemeral });
+}
+
+async function handleMyCheckInCommand(interaction, config) {
+  if (interaction.channelId !== config.channelId) {
+    await interaction.reply({
+      content: 'This command is only for the check-in channel 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getCheckInChannel(interaction.client, config.channelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Check-in channel not found. Check CHECKIN_CHANNEL_ID.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const panel = await findTodayPanel(channel, config);
+  if (!panel) {
+    await interaction.reply({
+      content: 'No check-in panel found for today. Use /checkin first 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await runCheckInFlow(interaction, panel, config);
+}
+
+async function handleCheckInStatusCommand(interaction, config) {
+  if (interaction.channelId !== config.channelId) {
+    await interaction.reply({
+      content: 'This command is only for the check-in channel 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getCheckInChannel(interaction.client, config.channelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Check-in channel not found. Check CHECKIN_CHANNEL_ID.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const panel = await findTodayPanel(channel, config);
+  if (!panel) {
+    await interaction.reply({
+      content: 'No check-in panel found for today. Use /checkin first 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const state = parsePanelState(panel.content, config);
+  await interaction.reply({
+    content: `${config.partner1Name}: ${state.partner1Row}\n${config.partner2Name}: ${state.partner2Row}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleCheckInButton(interaction, config) {
+  if (interaction.channelId !== config.channelId) {
+    await interaction.reply({
+      content: 'This check-in is only for Principe and Principessa 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const panelDate = extractPanelDate(interaction.message.content);
+  const today = todayISO(config.timezone);
+  if (panelDate && panelDate !== today) {
+    await interaction.reply({
+      content: 'This check-in panel is from another day. Use today\'s panel 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await runCheckInFlow(interaction, interaction.message, config);
+}
+
+async function runCheckInFlow(interaction, panelMessage, config) {
+  const partnerKey = partnerKeyByUserId(interaction.user.id, config);
+  if (!partnerKey) {
+    await safeReply(interaction, {
+      content: 'This check-in is only for Principe and Principessa 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const mood = await askSelect(interaction, {
+    prompt: 'How are you feeling right now?',
+    customId: `checkin_mood_${partnerKey}`,
+    options: MOOD_OPTIONS,
+  });
+  if (!mood) {
+    return;
+  }
+
+  const support = await askSelect(interaction, {
+    prompt: 'What support would help most right now?',
+    customId: `checkin_support_${partnerKey}`,
+    options: SUPPORT_OPTIONS,
+  });
+  if (!support) {
+    return;
+  }
+
+  await updatePanelMessage(panelMessage, config, partnerKey, mood, support);
+
+  await sendEphemeralPrompt(interaction, {
+    content: 'Check-in saved 💛',
+  });
+}
+
+async function askSelect(interaction, options) {
+  const { prompt, customId, options: selectOptions } = options;
+  const row = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder('Select one option').addOptions(selectOptions),
+  );
+
+  const promptMessage = await sendEphemeralPrompt(interaction, {
+    content: prompt,
+    components: [row],
+  });
+
+  try {
+    const selection = await promptMessage.awaitMessageComponent({
+      filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
+      time: 180000,
+    });
+
+    const value = selection.values[0];
+    await selection.update({ content: `${prompt}\nSelected: **${value}**`, components: [] });
+    return value;
+  } catch {
+    await sendEphemeralPrompt(interaction, {
+      content: 'Check-in timed out. You can run /mycheckin anytime 💛',
+    });
+    return null;
+  }
+}
+
+async function updatePanelMessage(message, config, partnerKey, mood, support) {
+  const state = parsePanelState(message.content, config);
+
+  if (partnerKey === 'partner1') {
+    state.partner1Row = `${mood} | ${support}`;
+  } else {
+    state.partner2Row = `${mood} | ${support}`;
+  }
+
+  const supportIdeaLine = buildSupportIdeaLine(state, config);
+  const careNoteLine = buildCombinedCareNote(state, config);
+  const newContent = composePanelContent(config, state.date, state.partner1Row, state.partner2Row, supportIdeaLine, careNoteLine);
+
+  await message.edit({ content: newContent, components: [checkInButtonRow()] });
+}
+
+function buildSupportIdeaLine(state, config) {
+  const p1Done = !isPendingRow(state.partner1Row);
+  const p2Done = !isPendingRow(state.partner2Row);
+
+  if ((p1Done && p2Done) || (!p1Done && !p2Done)) {
+    return '';
+  }
+
+  const checkedInPartner = p1Done ? 'partner1' : 'partner2';
+  const otherName = checkedInPartner === 'partner1' ? config.partner2Name : config.partner1Name;
+  const checkedInRow = checkedInPartner === 'partner1' ? state.partner1Row : state.partner2Row;
+  const support = extractSupport(checkedInRow);
+
+  return `Support idea for ${otherName}:\n${SUPPORT_IDEA_BY_PREF[support] || SUPPORT_IDEA_BY_PREF['❌ Skip support preference']}`;
+}
+
+function buildCombinedCareNote(state, config) {
+  const p1Done = !isPendingRow(state.partner1Row);
+  const p2Done = !isPendingRow(state.partner2Row);
+  if (!p1Done || !p2Done) {
+    return '';
+  }
+
+  const p1Mood = extractMood(state.partner1Row);
+  const p2Mood = extractMood(state.partner2Row);
+  const p1Support = extractSupport(state.partner1Row);
+  const p2Support = extractSupport(state.partner2Row);
+
+  if (p1Support === '⏳ Space / time' || p2Support === '⏳ Space / time') {
+    return 'Today\'s care note:\nRemember: space is not abandonment when it is communicated kindly.';
+  }
+
+  if (p1Support === '🫂 Comfort' || p2Support === '🫂 Comfort' || p1Support === '💞 Reassurance' || p2Support === '💞 Reassurance') {
+    return 'Today\'s care note:\nSmall affection and gentle words may help a lot today.';
+  }
+
+  const p1Neg = isNegativeMood(p1Mood);
+  const p2Neg = isNegativeMood(p2Mood);
+
+  if (p1Neg && p2Neg) {
+    return 'Today\'s care note:\nBoth of you seem emotionally heavy today. Prioritize softness and patience 💛';
+  }
+
+  if (p1Neg && !p2Neg) {
+    return `Today\'s care note:\n${config.partner1Name} may need a little extra care today.`;
+  }
+
+  if (!p1Neg && p2Neg) {
+    return `Today\'s care note:\n${config.partner2Name} may need a little extra care today.`;
+  }
+
+  return 'Today\'s care note:\nToday seems lighter. Keep nurturing what\'s working 💛';
+}
+
+function isNegativeMood(mood) {
+  return ['😴 Tired', '😕 Off / weird', '😰 Anxious', '😔 Sad', '😡 Irritated', '💔 Overwhelmed'].includes(mood);
+}
+
+function checkInButtonRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('checkin_do').setLabel('Do my check-in').setStyle(ButtonStyle.Primary),
+  );
+}
+
+async function postDailyPanel(channel, config) {
+  const date = todayISO(config.timezone);
+  const content = composePanelContent(
+    config,
+    date,
+    '⏳ Not checked in yet',
+    '⏳ Not checked in yet',
+    '',
+    '',
+  );
+
+  await channel.send({
+    content,
+    components: [checkInButtonRow()],
+    allowedMentions: { parse: [] },
+  });
+}
+
+function composePanelContent(config, date, partner1Row, partner2Row, supportIdeaLine, careNoteLine) {
+  return [
+    `🌤 Daily Check-In — ${date}`,
+    '',
+    `${config.partner1Name}: ${partner1Row}`,
+    `${config.partner2Name}: ${partner2Row}`,
+    '',
+    'Use the button below to check in 💛',
+    supportIdeaLine ? `\n${supportIdeaLine}` : '',
+    careNoteLine ? `\n${careNoteLine}` : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+function parsePanelState(content, config) {
+  const date = extractPanelDate(content) || todayISO(config.timezone);
+  return {
+    date,
+    partner1Row: extractPartnerRow(content, config.partner1Name) || '⏳ Not checked in yet',
+    partner2Row: extractPartnerRow(content, config.partner2Name) || '⏳ Not checked in yet',
+  };
+}
+
+function extractPanelDate(content) {
+  const firstLine = `${content || ''}`.split('\n')[0] || '';
+  const match = firstLine.match(/—\s*(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+function extractPartnerRow(content, name) {
+  const escapedName = escapeRegExp(name);
+  const regex = new RegExp(`^${escapedName}:\\s*(.+)$`, 'm');
+  const match = `${content || ''}`.match(regex);
+  return match ? match[1].trim() : '';
+}
+
+function extractMood(row) {
+  const [mood] = `${row || ''}`.split('|').map((part) => part.trim());
+  return mood;
+}
+
+function extractSupport(row) {
+  const parts = `${row || ''}`.split('|').map((part) => part.trim());
+  return parts[1] || '❌ Skip support preference';
+}
+
+function isPendingRow(row) {
+  return `${row || ''}`.startsWith('⏳ Not checked in yet');
+}
+
+function partnerKeyByUserId(userId, config) {
+  if (userId === config.partner1Id) {
+    return 'partner1';
+  }
+  if (userId === config.partner2Id) {
+    return 'partner2';
+  }
+  return null;
+}
+
+async function handleScheduledPost(client, config) {
+  try {
+    const channel = await getCheckInChannel(client, config.channelId);
+    if (!channel) {
+      console.warn('[check-in] Scheduled post skipped: check-in channel not found.');
+      return;
+    }
+
+    const panel = await findTodayPanel(channel, config);
+    if (panel) {
+      return;
+    }
+
+    await postDailyPanel(channel, config);
+  } catch (error) {
+    console.error('[check-in] Scheduled post failed:', error);
+  }
+}
+
+function scheduleDailyCheckIn(client, config) {
+  const schedule = () => {
+    const delay = millisUntilNextLocalTime(config.timezone, config.hour, config.minute);
+    scheduleLongTimeout(async () => {
+      await handleScheduledPost(client, config);
+      schedule();
+    }, delay);
+  };
+
+  schedule();
+}
+
+async function findTodayPanel(channel, config) {
+  const date = todayISO(config.timezone);
+  const messages = await fetchChannelMessages(channel, 200);
+  return (
+    messages.find(
+      (message) =>
+        message.author?.id === channel.client.user.id &&
+        `${message.content || ''}`.includes('🌤 Daily Check-In') &&
+        `${message.content || ''}`.includes(date),
+    ) || null
+  );
+}
+
+async function fetchChannelMessages(channel, max = 200) {
+  const messages = [];
+  let before;
+
+  while (messages.length < max) {
+    const limit = Math.min(100, max - messages.length);
+    const fetched = await channel.messages.fetch({ limit, before });
+
+    if (!fetched.size) {
+      break;
+    }
+
+    messages.push(...fetched.values());
+    before = fetched.last().id;
+  }
+
+  return messages;
+}
+
+async function getCheckInChannel(client, channelId) {
+  if (!channelId) {
+    return null;
+  }
+
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      return null;
+    }
+    return channel;
+  } catch (error) {
+    console.error('[check-in] Could not fetch check-in channel:', error);
+    return null;
+  }
+}
+
+function todayISO(timezone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  return `${year}-${month}-${day}`;
+}
+
+function millisUntilNextLocalTime(timeZone, hour, minute) {
+  const now = new Date();
+
+  for (let addDays = 0; addDays <= 2; addDays += 1) {
+    const candidate = new Date(now.getTime() + addDays * 24 * 60 * 60 * 1000);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(candidate);
+
+    const year = Number(parts.find((p) => p.type === 'year')?.value);
+    const month = Number(parts.find((p) => p.type === 'month')?.value);
+    const day = Number(parts.find((p) => p.type === 'day')?.value);
+
+    const target = zonedTimeToUtc({ year, month, day, hour, minute, second: 0 }, timeZone);
+    if (target.getTime() > now.getTime()) {
+      return target.getTime() - now.getTime();
+    }
+  }
+
+  return 60_000;
+}
+
+function zonedTimeToUtc(parts, timeZone) {
+  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0));
+
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
+  const local = dtf.formatToParts(utcGuess);
+  const actual = {
+    year: Number(local.find((p) => p.type === 'year')?.value),
+    month: Number(local.find((p) => p.type === 'month')?.value),
+    day: Number(local.find((p) => p.type === 'day')?.value),
+    hour: Number(local.find((p) => p.type === 'hour')?.value),
+    minute: Number(local.find((p) => p.type === 'minute')?.value),
+    second: Number(local.find((p) => p.type === 'second')?.value),
+  };
+
+  const desiredMillis = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0);
+  const actualMillis = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second);
+  const offset = actualMillis - desiredMillis;
+  return new Date(utcGuess.getTime() - offset);
+}
+
+function scheduleLongTimeout(callback, totalDelayMs) {
+  const safeDelay = Math.max(0, Number(totalDelayMs) || 0);
+  if (safeDelay <= MAX_TIMEOUT_MS) {
+    setTimeout(callback, safeDelay);
+    return;
+  }
+
+  setTimeout(() => {
+    scheduleLongTimeout(callback, safeDelay - MAX_TIMEOUT_MS);
+  }, MAX_TIMEOUT_MS);
+}
+
+function toSafeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function escapeRegExp(value) {
+  return `${value || ''}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function sendEphemeralPrompt(interaction, payload) {
+  const fullPayload = { ...payload, flags: MessageFlags.Ephemeral };
+  if (interaction.replied || interaction.deferred) {
+    return interaction.followUp(fullPayload);
+  }
+
+  await interaction.reply(fullPayload);
+  return interaction.fetchReply();
+}
+
+async function safeReply(interaction, payload) {
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(payload);
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+module.exports = {
+  setupCheckIn,
+};

@@ -23,12 +23,19 @@ Required:
 - `GUILD_ID`
 - `MEMORY_VAULT_CHANNEL_ID`
 - `BOUNDARIES_CHANNEL_ID`
+- `CHECKIN_CHANNEL_ID`
+- `PARTNER_1_USER_ID`
+- `PARTNER_1_NAME`
+- `PARTNER_2_USER_ID`
+- `PARTNER_2_NAME`
 
 Optional:
 
 - `TIMEZONE` (default: `Europe/Rome`)
 - `DAILY_MEMORY_REMINDER_HOUR` (default: `22`)
 - `DAILY_MEMORY_REMINDER_MINUTE` (default: `0`)
+- `DAILY_CHECKIN_HOUR` (default: `21`)
+- `DAILY_CHECKIN_MINUTE` (default: `0`)
 - `ENABLE_MESSAGE_CONTENT_INTENT` (`true` to enable full text memory capture)
 - `MEMORY_VAULT_TAG_USER_IDS` (comma-separated Discord user IDs to mention in daily reminder, e.g. `123...,456...`)
 
@@ -87,6 +94,18 @@ Optional:
   - Works only in `BOUNDARIES_CHANNEL_ID`.
   - Posts the guided boundary review prompt in channel.
 
+- `/checkin`
+  - Works only in `CHECKIN_CHANNEL_ID`.
+  - Manually posts today's daily check-in panel.
+
+- `/mycheckin`
+  - Works only in `CHECKIN_CHANNEL_ID`.
+  - Starts your mood/support check-in flow for today's panel.
+
+- `/checkinstatus`
+  - Works only in `CHECKIN_CHANNEL_ID`.
+  - Shows today's current check-in rows.
+
 ## Memory Vault behavior
 
 - Daily reminder at configured local time:
@@ -119,6 +138,13 @@ Tiny memories count too.
 - Old versions are archived in `Boundary History`.
 - No database is used.
 - Monthly review reminder posts automatically on the first Sunday of each month at 21:00 (`TIMEZONE` or default `Europe/Rome`).
+
+## Daily Check-In behavior
+
+- Posts one shared daily panel in `CHECKIN_CHANNEL_ID` at configured time.
+- Partners update only their own row through button/select flow.
+- State is stored only in the daily Discord message content and parsed/updated there.
+- No database, JSON file, or local storage is used.
 
 ## Railway deployment notes
 

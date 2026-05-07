@@ -1,7 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
-const { setupMemoryVault } = require('./automations/memory-vault');
-const { setupBoundaries } = require('./automations/boundaries');
+const { setupCheckIn } = require('./automations/check-in');
 
 const REQUIRED_ENV = ['DISCORD_TOKEN'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -23,12 +22,11 @@ const client = new Client({
 
 if (process.env.ENABLE_MESSAGE_CONTENT_INTENT !== 'true') {
   console.warn(
-    '[startup] ENABLE_MESSAGE_CONTENT_INTENT is not true. Text-content memory features may be limited until enabled.',
+    '[startup] ENABLE_MESSAGE_CONTENT_INTENT is not true. Any text-reading automations will be limited until enabled.',
   );
 }
 
-setupMemoryVault(client);
-setupBoundaries(client);
+setupCheckIn(client);
 
 client.once('ready', () => {
   console.log(`[startup] Logged in as ${client.user.tag}`);
