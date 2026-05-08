@@ -455,6 +455,7 @@ async function handleCancelCheckInCommand(interaction, activeFlowControls) {
 
 async function updatePanelMessage(message, config, partnerKey, mood, support) {
   const state = parsePanelState(message.content, config);
+  const wasBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
 
   if (partnerKey === 'partner1') {
     state.partner1Row = `${mood} | ${support}`;
@@ -467,6 +468,15 @@ async function updatePanelMessage(message, config, partnerKey, mood, support) {
   const newContent = composePanelContent(config, state.date, state.partner1Row, state.partner2Row, supportIdeaLine, careNoteLine);
 
   await message.edit({ content: newContent, components: [checkInButtonRow()] });
+
+  const isBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
+  if (!wasBothDone && isBothDone) {
+    await message.channel.send({
+      content: newContent,
+      components: [checkInButtonRow()],
+      allowedMentions: { parse: [] },
+    });
+  }
 }
 
 function buildSupportIdeaLine(state, config) {
