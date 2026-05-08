@@ -108,12 +108,12 @@ function setupCheckIn(client) {
         }
 
         if (interaction.commandName === 'mycheckin') {
-          await handleMyCheckInCommand(interaction, config);
+          await handleMyCheckInCommand(interaction, config, activeFlowControls);
           return;
         }
 
         if (interaction.commandName === 'testsecondcheckin') {
-          await handleTestSecondCheckInCommand(interaction, config);
+          await handleTestSecondCheckInCommand(interaction, config, activeFlowControls);
           return;
         }
 
@@ -125,7 +125,7 @@ function setupCheckIn(client) {
       }
 
       if (interaction.isButton() && interaction.customId.startsWith('checkin_do')) {
-        await handleCheckInButton(interaction, config);
+        await handleCheckInButton(interaction, config, activeFlowControls);
       }
     } catch (error) {
       console.error('[check-in] Interaction error:', error);
@@ -155,7 +155,11 @@ async function registerCheckInCommands(config) {
       CANCEL_CHECKIN_COMMAND.toJSON(),
     ];
     const incomingNames = new Set(incoming.map((command) => command.name));
-    const merged = [...existing.filter((command) => !incomingNames.has(command.name)), ...incoming];
+    const legacyNames = new Set(['checkin', 'checkinstatus']);
+    const merged = [
+      ...existing.filter((command) => !incomingNames.has(command.name) && !legacyNames.has(command.name)),
+      ...incoming,
+    ];
 
     await rest.put(route, { body: merged });
     console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin, /cancelcheckin');
@@ -195,7 +199,7 @@ async function handleStartCheckInCommand(interaction, config) {
   await interaction.reply({ content: 'Today\'s check-in panel posted 💛', flags: MessageFlags.Ephemeral });
 }
 
-async function handleMyCheckInCommand(interaction, config) {
+async function handleMyCheckInCommand(interaction, config, activeFlowControls) {
   if (interaction.channelId !== config.channelId) {
     await interaction.reply({
       content: 'This command is only for the check-in channel 💛',
@@ -225,7 +229,7 @@ async function handleMyCheckInCommand(interaction, config) {
   await runCheckInFlow(interaction, panel, config, activeFlowControls);
 }
 
-async function handleTestSecondCheckInCommand(interaction, config) {
+async function handleTestSecondCheckInCommand(interaction, config, activeFlowControls) {
   if (interaction.channelId !== config.channelId) {
     await interaction.reply({
       content: 'This command is only for the check-in channel 💛',
@@ -281,7 +285,7 @@ async function handleTestSecondCheckInCommand(interaction, config) {
   });
 }
 
-async function handleCheckInButton(interaction, config) {
+async function handleCheckInButton(interaction, config, activeFlowControls) {
   if (interaction.channelId !== config.channelId) {
     await interaction.reply({
       content: 'This check-in is only for Principe and Principessa 💛',
@@ -300,7 +304,7 @@ async function handleCheckInButton(interaction, config) {
     return;
   }
 
-  await runCheckInFlow(interaction, interaction.message, config);
+  await runCheckInFlow(interaction, interaction.message, config, activeFlowControls);
 }
 
 async function runCheckInFlow(interaction, panelMessage, config, activeFlowControls) {
