@@ -46,6 +46,12 @@ const RANDOM_MEMORY_COMMAND = new SlashCommandBuilder()
   .setName('randommemory')
   .setDescription('Show a random memory from the Memory Vault');
 
+const BLOCKED_MEMORY_TEXTS = new Set([
+  'send your memory as your next message. tiny memories count too 💛',
+  'choose your memory flow:',
+  'pick your memory type:',
+]);
+
 const TEST_WEEKLY_RECAP_COMMAND = new SlashCommandBuilder()
   .setName('testweeklyrecap')
   .setDescription('Force-run the weekly recap now (for testing)');
@@ -281,7 +287,18 @@ async function handleAddMemory(interaction, config) {
 async function waitForNextMemoryMessage(channel, userId) {
   try {
     const collected = await channel.awaitMessages({
-      filter: (message) => message.author.id === userId && !message.author.bot,
+      filter: (message) => {
+        if (message.author.id !== userId || message.author.bot) {
+          return false;
+        }
+
+        const normalized = `${message.content || ''}`.trim().toLowerCase();
+        if (BLOCKED_MEMORY_TEXTS.has(normalized)) {
+          return false;
+        }
+
+        return true;
+      },
       max: 1,
     });
 
