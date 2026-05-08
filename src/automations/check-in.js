@@ -11,9 +11,11 @@ const {
   StringSelectMenuBuilder,
 } = require('discord.js');
 
-const CHECKIN_COMMAND = new SlashCommandBuilder().setName('checkin').setDescription('Post today\'s daily check-in panel');
+const START_CHECKIN_COMMAND = new SlashCommandBuilder().setName('startcheckin').setDescription('Post today\'s daily check-in panel');
 const MY_CHECKIN_COMMAND = new SlashCommandBuilder().setName('mycheckin').setDescription('Start your check-in for today\'s panel');
-const CHECKIN_STATUS_COMMAND = new SlashCommandBuilder().setName('checkinstatus').setDescription('Show today\'s check-in status');
+const TEST_SECOND_CHECKIN_COMMAND = new SlashCommandBuilder()
+  .setName('testsecondcheckin')
+  .setDescription('Test check-in as partner 2');
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -93,8 +95,8 @@ function setupCheckIn(client) {
 
     try {
       if (interaction.isChatInputCommand()) {
-        if (interaction.commandName === 'checkin') {
-          await handleCheckInCommand(interaction, config);
+        if (interaction.commandName === 'startcheckin') {
+          await handleStartCheckInCommand(interaction, config);
           return;
         }
 
@@ -103,10 +105,11 @@ function setupCheckIn(client) {
           return;
         }
 
-        if (interaction.commandName === 'checkinstatus') {
-          await handleCheckInStatusCommand(interaction, config);
+        if (interaction.commandName === 'testsecondcheckin') {
+          await handleTestSecondCheckInCommand(interaction, config);
           return;
         }
+
       }
 
       if (interaction.isButton() && interaction.customId.startsWith('checkin_do')) {
@@ -133,18 +136,18 @@ async function registerCheckInCommands(config) {
 
   try {
     const existing = await rest.get(route);
-    const incoming = [CHECKIN_COMMAND.toJSON(), MY_CHECKIN_COMMAND.toJSON(), CHECKIN_STATUS_COMMAND.toJSON()];
+    const incoming = [START_CHECKIN_COMMAND.toJSON(), MY_CHECKIN_COMMAND.toJSON(), TEST_SECOND_CHECKIN_COMMAND.toJSON()];
     const incomingNames = new Set(incoming.map((command) => command.name));
     const merged = [...existing.filter((command) => !incomingNames.has(command.name)), ...incoming];
 
     await rest.put(route, { body: merged });
-    console.log('[check-in] Slash commands registered: /checkin, /mycheckin, /checkinstatus');
+    console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin');
   } catch (error) {
     console.error('[check-in] Failed to register slash commands:', error);
   }
 }
 
-async function handleCheckInCommand(interaction, config) {
+async function handleStartCheckInCommand(interaction, config) {
   if (interaction.channelId !== config.channelId) {
     await interaction.reply({
       content: 'This command is only for the check-in channel 💛',
@@ -196,7 +199,7 @@ async function handleMyCheckInCommand(interaction, config) {
   const panel = await findTodayPanel(channel, config);
   if (!panel) {
     await interaction.reply({
-      content: 'No check-in panel found for today. Use /checkin first 💛',
+      content: 'No check-in panel found for today. Use /startcheckin first 💛',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -205,7 +208,7 @@ async function handleMyCheckInCommand(interaction, config) {
   await runCheckInFlow(interaction, panel, config);
 }
 
-async function handleCheckInStatusCommand(interaction, config) {
+async function handleTestSecondCheckInCommand(interaction, config) {
   if (interaction.channelId !== config.channelId) {
     await interaction.reply({
       content: 'This command is only for the check-in channel 💛',
@@ -223,19 +226,41 @@ async function handleCheckInStatusCommand(interaction, config) {
     return;
   }
 
-  const panel = await findTodayPanel(channel, config);
+  let panel = await findTodayPanel(channel, config);
+  if (!panel) {
+    await postDailyPanel(channel, config);
+    panel = await findTodayPanel(channel, config);
+  }
+
   if (!panel) {
     await interaction.reply({
-      content: 'No check-in panel found for today. Use /checkin first 💛',
+      content: 'Could not create or find today\'s check-in panel.',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const state = parsePanelState(panel.content, config);
-  await interaction.reply({
-    content: `${config.partner1Name}: ${state.partner1Row}\n${config.partner2Name}: ${state.partner2Row}`,
-    flags: MessageFlags.Ephemeral,
+  const mood = await askSelect(interaction, {
+    prompt: `Test as ${config.partner2Name}: choose mood`,
+    customId: 'checkin_test_second_mood',
+    options: MOOD_OPTIONS,
+  });
+  if (!mood) {
+    return;
+  }
+
+  const support = await askSelect(interaction, {
+    prompt: `Test as ${config.partner2Name}: choose support`,
+    customId: 'checkin_test_second_support',
+    options: SUPPORT_OPTIONS,
+  });
+  if (!support) {
+    return;
+  }
+
+  await updatePanelMessage(panel, config, 'partner2', mood, support);
+  await sendEphemeralPrompt(interaction, {
+    content: `Saved test check-in for ${config.partner2Name} 💛`,
   });
 }
 
