@@ -79,22 +79,27 @@ function setupLoveActions(client) {
 
     try {
       if (interaction.commandName === 'addaction') {
+        console.log(`[love-actions] /addaction by ${interaction.user.id}`);
         await handleAddAction(interaction, config, activeFlows);
       }
 
       if (interaction.commandName === 'action') {
+        console.log(`[love-actions] /action by ${interaction.user.id}`);
         await handleGetAction(interaction, config, activeFlows);
       }
 
       if (interaction.commandName === 'actiondone') {
+        console.log(`[love-actions] /actiondone by ${interaction.user.id}`);
         await handleActionDone(interaction, config);
       }
 
       if (interaction.commandName === 'retireaction') {
+        console.log(`[love-actions] /retireaction by ${interaction.user.id}`);
         await handleRetireAction(interaction, config, activeFlows);
       }
 
       if (interaction.commandName === 'myactions') {
+        console.log(`[love-actions] /myactions by ${interaction.user.id}`);
         await handleMyActions(interaction, config);
       }
     } catch (error) {
@@ -510,6 +515,9 @@ async function askChoice(interaction, options) {
     content: prompt,
     components: [row],
   });
+  if (!promptMessage || typeof promptMessage.awaitMessageComponent !== 'function') {
+    throw new Error('Could not create an interactive prompt message for component collection.');
+  }
 
   try {
     const selected = await promptMessage.awaitMessageComponent({
@@ -618,11 +626,12 @@ function escapeRegExp(value) {
 async function sendEphemeralPrompt(interaction, payload) {
   const fullPayload = { ...payload, flags: MessageFlags.Ephemeral };
   if (interaction.replied || interaction.deferred) {
-    return interaction.followUp(fullPayload);
+    const response = await interaction.followUp({ ...fullPayload, withResponse: true });
+    return response?.resource?.message ?? null;
   }
 
-  await interaction.reply(fullPayload);
-  return interaction.fetchReply();
+  const response = await interaction.reply({ ...fullPayload, withResponse: true });
+  return response?.resource?.message ?? null;
 }
 
 async function safeReply(interaction, payload) {
