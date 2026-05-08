@@ -471,8 +471,9 @@ async function updatePanelMessage(message, config, partnerKey, mood, support) {
 
   const isBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
   if (!wasBothDone && isBothDone) {
+    const repostContent = newContent.replace('\nUse the button below to check in 💛', '');
     await message.channel.send({
-      content: newContent,
+      content: repostContent,
       components: [checkInButtonRow()],
       allowedMentions: { parse: [] },
     });
