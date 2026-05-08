@@ -41,13 +41,6 @@ const UPDATE_BOUNDARY_COMMAND = new SlashCommandBuilder()
   .setName('updateboundary')
   .setDescription('Update an existing boundary and archive the old version');
 
-const BOUNDARY_REQUEST_COMMAND = new SlashCommandBuilder()
-  .setName('boundaryrequest')
-  .setDescription('Create a gentle boundary discussion request');
-
-const REVIEW_BOUNDARIES_COMMAND = new SlashCommandBuilder()
-  .setName('reviewboundaries')
-  .setDescription('Post a boundaries review prompt');
 
 function setupBoundaries(client) {
   const config = {
@@ -86,8 +79,7 @@ function setupBoundaries(client) {
       console.warn('[boundaries] Could not find boundaries channel during startup.');
     }
 
-    scheduleMonthlyReview(client, config);
-    console.log('[boundaries] Ready | monthly review=First Sunday 21:00');
+    console.log('[boundaries] Ready.');
     if (!config.messageContentEnabled) {
       console.warn(
         '[boundaries] ENABLE_MESSAGE_CONTENT_INTENT is not true. Guided text answers may be empty. Enable Message Content Intent for boundaries flows.',
@@ -113,13 +105,6 @@ function setupBoundaries(client) {
         await handleUpdateBoundary(interaction, config, activeFlows);
       }
 
-      if (interaction.commandName === 'boundaryrequest') {
-        await handleBoundaryRequest(interaction, config, activeFlows);
-      }
-
-      if (interaction.commandName === 'reviewboundaries') {
-        await handleReviewBoundaries(interaction, config);
-      }
     } catch (error) {
       console.error('[boundaries] Interaction error:', error);
       await safeReply(interaction, {
@@ -145,8 +130,6 @@ async function registerBoundaryCommands(config) {
       ADD_BOUNDARY_COMMAND.toJSON(),
       BOUNDARY_LIST_COMMAND.toJSON(),
       UPDATE_BOUNDARY_COMMAND.toJSON(),
-      BOUNDARY_REQUEST_COMMAND.toJSON(),
-      REVIEW_BOUNDARIES_COMMAND.toJSON(),
     ];
     const incomingNames = new Set(incoming.map((command) => command.name));
     const merged = [...existing.filter((command) => !incomingNames.has(command.name)), ...incoming];
@@ -455,162 +438,6 @@ async function handleUpdateBoundary(interaction, config, activeFlows) {
   }
 }
 
-async function handleBoundaryRequest(interaction, config, activeFlows) {
-  if (!isInBoundariesChannel(interaction, config)) {
-    await onlyBoundariesReply(interaction);
-    return;
-  }
-
-  if (activeFlows.has(interaction.user.id)) {
-    await interaction.reply({
-      content: 'You already have an active boundary flow. Finish it first or wait for timeout 💛',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  activeFlows.add(interaction.user.id);
-
-  try {
-    const channel = await getBoundariesChannel(interaction.client, config.boundariesChannelId);
-    if (!channel) {
-      await interaction.reply({ content: 'Boundaries channel not found. Check BOUNDARIES_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    const { listThread } = await ensureBoundariesThreads(channel);
-
-    const category = await askChoice(interaction, {
-      prompt: 'Choose category:',
-      customId: 'boundary_request_category',
-      values: BOUNDARY_CATEGORIES,
-    });
-    if (!category) return;
-
-    const type = await askChoice(interaction, {
-      prompt: 'Choose boundary type:',
-      customId: 'boundary_request_type',
-      values: BOUNDARY_TYPES,
-    });
-    if (!type) return;
-
-    const status = await askChoice(interaction, {
-      prompt: 'Choose status:',
-      customId: 'boundary_request_status',
-      values: ['🟡 Needs discussion', '🟢 Agreed'],
-    });
-    if (!status) return;
-
-    const collected = await askTextQuestions(interaction, config, [
-      'What situation makes you uncomfortable?',
-      'What feeling does it trigger?',
-      'What are you afraid this could mean?',
-      'What would help you feel respected or safer?',
-      'What possible middle ground could exist?',
-      'Is there anything you want your partner to understand?',
-    ]);
-    if (!collected) return;
-    const { answers, messages: responseMessages } = collected;
-
-    const requestMessage = [
-      '🟡 Boundary Request',
-      `Category: ${category}`,
-      `Type: ${type}`,
-      `Status: ${status}`,
-      `Requested by: ${interaction.user.username}`,
-      `Date: ${formatDateTime(new Date(), config.timezone)}`,
-      '',
-      `Situation: ${toText(answers[0])}`,
-      `Feeling triggered: ${toText(answers[1])}`,
-      `Fear/meaning: ${toText(answers[2])}`,
-      `What would help: ${toText(answers[3])}`,
-      `Possible middle ground: ${toText(answers[4])}`,
-      `Partner understanding: ${toText(answers[5])}`,
-    ].join('\n');
-
-    await interaction.channel.send({ content: requestMessage, allowedMentions: { parse: [] } });
-    const cleanupResult = await cleanupCapturedMessages(responseMessages);
-
-    if (status === '🟢 Agreed') {
-      const boundaryContent = formatBoundaryEntry({
-        title: answers[0],
-        category,
-        status,
-        type,
-        addedBy: interaction.user.username,
-        date: formatDateTime(new Date(), config.timezone),
-        why: answers[1],
-        okay: answers[3],
-        notOkay: answers[2],
-        handling: answers[4],
-        notes: answers[5],
-        originalDiscussion: `https://discord.com/channels/${interaction.guildId}/${interaction.channelId}`,
-      });
-
-      await listThread.send({ content: boundaryContent, allowedMentions: { parse: [] } });
-    }
-
-    await interaction.followUp({
-      content: status === '🟢 Agreed'
-        ? 'Boundary request posted and added to the list 💛'
-        : 'Boundary request posted for discussion 💛',
-      flags: MessageFlags.Ephemeral,
-    });
-    if (!cleanupResult.ok) {
-      await interaction.followUp({
-        content:
-          'I posted the request, but I could not remove some answer messages. Please give me `Manage Messages` permission in this channel.',
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-  } finally {
-    activeFlows.delete(interaction.user.id);
-  }
-}
-
-async function handleReviewBoundaries(interaction, config) {
-  if (!isInBoundariesChannel(interaction, config)) {
-    await onlyBoundariesReply(interaction);
-    return;
-  }
-
-  await interaction.reply({
-    content: reviewPrompt(),
-    allowedMentions: { parse: [] },
-  });
-}
-
-function scheduleMonthlyReview(client, config) {
-  const schedule = () => {
-    const delay = millisUntilNextMonthlyReview(config.timezone);
-    scheduleLongTimeout(async () => {
-      await postMonthlyReview(client, config);
-      schedule();
-    }, delay);
-  };
-
-  schedule();
-}
-
-async function postMonthlyReview(client, config) {
-  try {
-    const now = new Date();
-    if (!isFirstSundayAtReviewTime(now, config.timezone)) {
-      return;
-    }
-
-    const channel = await getBoundariesChannel(client, config.boundariesChannelId);
-    if (!channel) {
-      console.warn('[boundaries] Monthly review skipped: channel not found.');
-      return;
-    }
-
-    await channel.send({ content: reviewPrompt(), allowedMentions: { parse: [] } });
-  } catch (error) {
-    console.error('[boundaries] Failed monthly review reminder:', error);
-  }
-}
-
 async function ensureBoundariesThreads(channel) {
   const listThread = await getOrCreateThread(channel, LIST_THREAD_NAME, 'Active boundaries archive');
   const historyThread = await getOrCreateThread(channel, HISTORY_THREAD_NAME, 'Boundary update archive history');
@@ -800,74 +627,6 @@ async function fetchChannelMessages(channel, max = 500) {
   }
 
   return messages;
-}
-
-function reviewPrompt() {
-  return [
-    '💛 Boundary Review',
-    '',
-    'Do any boundaries need:',
-    '- clarification',
-    '- softening',
-    '- strengthening',
-    '- removal',
-    '- better wording?',
-    '',
-    'Use:',
-    '/boundarylist to view current boundaries',
-    '/updateboundary to revise one',
-    '/boundaryrequest to propose something new',
-  ].join('\n');
-}
-
-function millisUntilNextMonthlyReview(timezone) {
-  const now = new Date();
-
-  for (let days = 0; days <= 62; days += 1) {
-    const candidate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      weekday: 'short',
-    }).formatToParts(candidate);
-
-    const day = Number(parts.find((p) => p.type === 'day')?.value || '1');
-    const weekday = parts.find((p) => p.type === 'weekday')?.value;
-    if (weekday !== 'Sun' || day > 7) {
-      continue;
-    }
-
-    const year = Number(parts.find((p) => p.type === 'year')?.value || '2000');
-    const month = Number(parts.find((p) => p.type === 'month')?.value || '1');
-    const target = zonedTimeToUtc({ year, month, day, hour: 21, minute: 0, second: 0 }, timezone);
-
-    if (target.getTime() > now.getTime()) {
-      return target.getTime() - now.getTime();
-    }
-  }
-
-  return 60 * 1000;
-}
-
-function isFirstSundayAtReviewTime(date, timezone) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-
-  const weekday = parts.find((p) => p.type === 'weekday')?.value;
-  const day = Number(parts.find((p) => p.type === 'day')?.value || '1');
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value || '0');
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value || '0');
-
-  return weekday === 'Sun' && day <= 7 && hour === 21 && minute === 0;
 }
 
 function zonedTimeToUtc(parts, timeZone) {
