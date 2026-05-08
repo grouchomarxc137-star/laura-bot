@@ -16,6 +16,9 @@ const MY_CHECKIN_COMMAND = new SlashCommandBuilder().setName('mycheckin').setDes
 const TEST_SECOND_CHECKIN_COMMAND = new SlashCommandBuilder()
   .setName('testsecondcheckin')
   .setDescription('Test check-in as partner 2');
+const CANCEL_CHECKIN_COMMAND = new SlashCommandBuilder()
+  .setName('cancelcheckin')
+  .setDescription('Cancel your current check-in flow');
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -32,6 +35,7 @@ const MOOD_OPTIONS = [
 
 const SUPPORT_OPTIONS = [
   { label: '🫂 Comfort', value: '🫂 Comfort' },
+  { label: '💗 Affection', value: '💗 Affection' },
   { label: '💞 Reassurance', value: '💞 Reassurance' },
   { label: '🧠 Perspective', value: '🧠 Perspective' },
   { label: '🛠 Help / solutions', value: '🛠 Help / solutions' },
@@ -42,6 +46,7 @@ const SUPPORT_OPTIONS = [
 
 const SUPPORT_IDEA_BY_PREF = {
   '🫂 Comfort': 'Ask softly: “What would feel comforting right now?”',
+  '💗 Affection': 'Offer gentle affection: a hug, a hand squeeze, or soft closeness.',
   '💞 Reassurance': 'Offer reassurance without forcing a big discussion.',
   '🧠 Perspective': 'Ask first: “Do you want my honest perspective?”',
   '🛠 Help / solutions': 'Offer practical help or ask: “What can I help solve?”',
@@ -51,6 +56,8 @@ const SUPPORT_IDEA_BY_PREF = {
 };
 
 function setupCheckIn(client) {
+  const activeFlowControls = new Map();
+
   const config = {
     clientId: process.env.CLIENT_ID,
     guildId: process.env.GUILD_ID,
@@ -110,6 +117,11 @@ function setupCheckIn(client) {
           return;
         }
 
+        if (interaction.commandName === 'cancelcheckin') {
+          await handleCancelCheckInCommand(interaction, activeFlowControls);
+          return;
+        }
+
       }
 
       if (interaction.isButton() && interaction.customId.startsWith('checkin_do')) {
@@ -136,12 +148,17 @@ async function registerCheckInCommands(config) {
 
   try {
     const existing = await rest.get(route);
-    const incoming = [START_CHECKIN_COMMAND.toJSON(), MY_CHECKIN_COMMAND.toJSON(), TEST_SECOND_CHECKIN_COMMAND.toJSON()];
+    const incoming = [
+      START_CHECKIN_COMMAND.toJSON(),
+      MY_CHECKIN_COMMAND.toJSON(),
+      TEST_SECOND_CHECKIN_COMMAND.toJSON(),
+      CANCEL_CHECKIN_COMMAND.toJSON(),
+    ];
     const incomingNames = new Set(incoming.map((command) => command.name));
     const merged = [...existing.filter((command) => !incomingNames.has(command.name)), ...incoming];
 
     await rest.put(route, { body: merged });
-    console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin');
+    console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin, /cancelcheckin');
   } catch (error) {
     console.error('[check-in] Failed to register slash commands:', error);
   }
@@ -205,7 +222,7 @@ async function handleMyCheckInCommand(interaction, config) {
     return;
   }
 
-  await runCheckInFlow(interaction, panel, config);
+  await runCheckInFlow(interaction, panel, config, activeFlowControls);
 }
 
 async function handleTestSecondCheckInCommand(interaction, config) {
@@ -244,7 +261,7 @@ async function handleTestSecondCheckInCommand(interaction, config) {
     prompt: `Test as ${config.partner2Name}: choose mood`,
     customId: 'checkin_test_second_mood',
     options: MOOD_OPTIONS,
-  });
+  }, activeFlowControls);
   if (!mood) {
     return;
   }
@@ -253,7 +270,7 @@ async function handleTestSecondCheckInCommand(interaction, config) {
     prompt: `Test as ${config.partner2Name}: choose support`,
     customId: 'checkin_test_second_support',
     options: SUPPORT_OPTIONS,
-  });
+  }, activeFlowControls);
   if (!support) {
     return;
   }
@@ -286,7 +303,7 @@ async function handleCheckInButton(interaction, config) {
   await runCheckInFlow(interaction, interaction.message, config);
 }
 
-async function runCheckInFlow(interaction, panelMessage, config) {
+async function runCheckInFlow(interaction, panelMessage, config, activeFlowControls) {
   const partnerKey = partnerKeyByUserId(interaction.user.id, config);
   if (!partnerKey) {
     await safeReply(interaction, {
@@ -296,46 +313,66 @@ async function runCheckInFlow(interaction, panelMessage, config) {
     return;
   }
 
-  const mood = await askSelect(interaction, {
-    prompt: 'How are you feeling right now?',
-    customId: `checkin_mood_${partnerKey}`,
-    options: MOOD_OPTIONS,
-  });
-  if (!mood) {
+  if (activeFlowControls.has(interaction.user.id)) {
+    await sendEphemeralPrompt(interaction, {
+      content: 'You already have an active check-in flow. Use /cancelcheckin if needed 💛',
+    });
     return;
   }
 
-  const support = await askSelect(interaction, {
-    prompt: 'What support would help most right now?',
-    customId: `checkin_support_${partnerKey}`,
-    options: SUPPORT_OPTIONS,
-  });
-  if (!support) {
-    return;
+  const control = { cancelled: false, cancelWait: null };
+  activeFlowControls.set(interaction.user.id, control);
+
+  try {
+    const mood = await askSelect(interaction, {
+      prompt: 'How are you feeling right now?',
+      customId: `checkin_mood_${partnerKey}`,
+      options: MOOD_OPTIONS,
+    }, activeFlowControls);
+    if (!mood) {
+      return;
+    }
+
+    const support = await askSelect(interaction, {
+      prompt: 'What support would help most right now?',
+      customId: `checkin_support_${partnerKey}`,
+      options: SUPPORT_OPTIONS,
+    }, activeFlowControls);
+    if (!support) {
+      return;
+    }
+
+    await updatePanelMessage(panelMessage, config, partnerKey, mood, support);
+
+    await sendEphemeralPrompt(interaction, {
+      content: 'Check-in saved 💛',
+    });
+  } finally {
+    activeFlowControls.delete(interaction.user.id);
   }
-
-  await updatePanelMessage(panelMessage, config, partnerKey, mood, support);
-
-  await sendEphemeralPrompt(interaction, {
-    content: 'Check-in saved 💛',
-  });
 }
 
-async function askSelect(interaction, options) {
+async function askSelect(interaction, options, activeFlowControls) {
   const { prompt, customId, options: selectOptions } = options;
   const row = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder('Select one option').addOptions(selectOptions),
   );
 
-  const promptMessage = await sendEphemeralPrompt(interaction, {
+  await sendEphemeralPrompt(interaction, {
     content: prompt,
     components: [row],
   });
 
   try {
-    const selection = await promptMessage.awaitMessageComponent({
-      filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-    });
+    const selection = await waitForSelectInteraction(
+      interaction.client,
+      interaction.user.id,
+      customId,
+      activeFlowControls,
+    );
+    if (!selection) {
+      return null;
+    }
 
     const value = selection.values[0];
     await selection.update({ content: `${prompt}\nSelected: **${value}**`, components: [] });
@@ -343,6 +380,28 @@ async function askSelect(interaction, options) {
   } catch {
     return null;
   }
+}
+
+async function handleCancelCheckInCommand(interaction, activeFlowControls) {
+  const control = activeFlowControls.get(interaction.user.id);
+  if (!control) {
+    await interaction.reply({
+      content: 'No active check-in flow to cancel right now 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  control.cancelled = true;
+  if (typeof control.cancelWait === 'function') {
+    control.cancelWait();
+  }
+
+  activeFlowControls.delete(interaction.user.id);
+  await interaction.reply({
+    content: 'Check-in flow cancelled 💛',
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function updatePanelMessage(message, config, partnerKey, mood, support) {
@@ -393,7 +452,14 @@ function buildCombinedCareNote(state, config) {
     return 'Today\'s care note:\nRemember: space is not abandonment when it is communicated kindly.';
   }
 
-  if (p1Support === '🫂 Comfort' || p2Support === '🫂 Comfort' || p1Support === '💞 Reassurance' || p2Support === '💞 Reassurance') {
+  if (
+    p1Support === '🫂 Comfort' ||
+    p2Support === '🫂 Comfort' ||
+    p1Support === '💗 Affection' ||
+    p2Support === '💗 Affection' ||
+    p1Support === '💞 Reassurance' ||
+    p2Support === '💞 Reassurance'
+  ) {
     return 'Today\'s care note:\nSmall affection and gentle words may help a lot today.';
   }
 
@@ -690,6 +756,50 @@ async function safeReply(interaction, payload) {
     return;
   }
   await interaction.reply(payload);
+}
+
+function waitForSelectInteraction(client, userId, customId, activeFlowControls) {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      client.off(Events.InteractionCreate, handler);
+      const control = activeFlowControls.get(userId);
+      if (control) {
+        control.cancelWait = null;
+      }
+      resolve(value);
+    };
+
+    const handler = (incoming) => {
+      if (!incoming.isStringSelectMenu()) {
+        return;
+      }
+      if (incoming.user.id !== userId) {
+        return;
+      }
+      if (incoming.customId !== customId) {
+        return;
+      }
+
+      finish(incoming);
+    };
+
+    const control = activeFlowControls.get(userId);
+    if (control) {
+      control.cancelWait = () => finish(null);
+      if (control.cancelled) {
+        finish(null);
+        return;
+      }
+    }
+
+    client.on(Events.InteractionCreate, handler);
+  });
 }
 
 module.exports = {
