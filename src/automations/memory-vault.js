@@ -1,56 +1,15 @@
 const {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   ChannelType,
   EmbedBuilder,
   Events,
   REST,
   Routes,
   SlashCommandBuilder,
-  StringSelectMenuBuilder,
 } = require('discord.js');
-
-const MEMORY_TYPES = {
-  funny: {
-    label: 'Funny',
-    prompt: 'What made you laugh or smile today?',
-  },
-  comforting: {
-    label: 'Comforting',
-    prompt: 'What made you feel safe, calm, or cared for today?',
-  },
-  appreciation: {
-    label: 'Appreciation',
-    prompt: 'What did you appreciate about us today?',
-  },
-  realization: {
-    label: 'Realization',
-    prompt: 'What did you realize about us, yourself, or love today?',
-  },
-  difficult_meaningful: {
-    label: 'Difficult but meaningful',
-    prompt: 'What was hard today but still meaningful for us?',
-  },
-  random_little_moment: {
-    label: 'Random little moment',
-    prompt: 'What tiny random moment do you want future us to remember?',
-  },
-};
-
-const ADD_MEMORY_COMMAND = new SlashCommandBuilder()
-  .setName('addmemory')
-  .setDescription('Add a memory to the Memory Vault');
 
 const RANDOM_MEMORY_COMMAND = new SlashCommandBuilder()
   .setName('randommemory')
   .setDescription('Show a random memory from the Memory Vault');
-
-const BLOCKED_MEMORY_TEXTS = new Set([
-  'send your memory as your next message. tiny memories count too 💛',
-  'choose your memory flow:',
-  'pick your memory type:',
-]);
 
 const TEST_WEEKLY_RECAP_COMMAND = new SlashCommandBuilder()
   .setName('testweeklyrecap')
@@ -108,10 +67,6 @@ function setupMemoryVault(client) {
         return;
       }
 
-      if (interaction.commandName === 'addmemory') {
-        await handleAddMemory(interaction, config);
-      }
-
       if (interaction.commandName === 'randommemory') {
         await handleRandomMemory(interaction, config);
       }
@@ -156,7 +111,6 @@ async function registerCommands(client, config) {
     const route = Routes.applicationGuildCommands(config.clientId, config.guildId);
     const existing = await rest.get(route);
     const incoming = [
-      ADD_MEMORY_COMMAND.toJSON(),
       RANDOM_MEMORY_COMMAND.toJSON(),
       TEST_WEEKLY_RECAP_COMMAND.toJSON(),
       TEST_DAILY_REMINDER_COMMAND.toJSON(),
@@ -169,142 +123,10 @@ async function registerCommands(client, config) {
 
     await rest.put(route, { body: merged });
     console.log(
-      '[memory-vault] Slash commands registered: /addmemory, /randommemory, /testweeklyrecap, /testdailyreminder',
+      '[memory-vault] Slash commands registered: /randommemory, /testweeklyrecap, /testdailyreminder',
     );
   } catch (error) {
     console.error('[memory-vault] Failed to register slash commands:', error);
-  }
-}
-
-async function handleAddMemory(interaction, config) {
-  if (interaction.channelId !== config.memoryVaultChannelId) {
-    await interaction.reply({
-      content: 'This command is only for the Memory Vault 💛',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const flowButtons = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('memory_flow_free').setLabel('Free').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('memory_flow_guided').setLabel('Guided').setStyle(ButtonStyle.Secondary),
-  );
-
-  await interaction.reply({
-    content: 'Choose your memory flow:',
-    components: [flowButtons],
-    ephemeral: true,
-  });
-
-  const response = await interaction.fetchReply();
-  let selectedFlow;
-
-  try {
-    const flowInteraction = await response.awaitMessageComponent({
-      filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-    });
-
-    selectedFlow = flowInteraction.customId;
-
-    if (selectedFlow === 'memory_flow_free') {
-      await flowInteraction.update({
-        content: 'Send your memory as your next message. Tiny memories count too 💛',
-        components: [],
-      });
-
-      const memoryMessage = await waitForNextMemoryMessage(interaction.channel, interaction.user.id);
-      if (!memoryMessage) {
-        await interaction.followUp({
-          content: 'I did not catch a message in time. Use /addmemory whenever you are ready 💛',
-          ephemeral: true,
-        });
-        return;
-      }
-
-      await interaction.followUp({
-        content: 'Memory saved 💛',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const selectMenu = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('memory_guided_type')
-        .setPlaceholder('Choose a memory type')
-        .addOptions(
-          Object.entries(MEMORY_TYPES).map(([value, details]) => ({
-            label: details.label,
-            value,
-          })),
-        ),
-    );
-
-    await flowInteraction.update({
-      content: 'Pick your memory type:',
-      components: [selectMenu],
-    });
-
-    const guidedSelectorMessage = await interaction.fetchReply();
-    const guidedTypeInteraction = await guidedSelectorMessage.awaitMessageComponent({
-      filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-    });
-
-    const type = guidedTypeInteraction.values[0];
-    const memoryType = MEMORY_TYPES[type];
-
-    if (!memoryType) {
-      await guidedTypeInteraction.update({
-        content: 'That memory type is not supported. Please run /addmemory again.',
-        components: [],
-      });
-      return;
-    }
-
-    await guidedTypeInteraction.update({
-      content: `${memoryType.label}: ${memoryType.prompt}`,
-      components: [],
-    });
-
-    const memoryMessage = await waitForNextMemoryMessage(interaction.channel, interaction.user.id);
-    if (!memoryMessage) {
-      await interaction.followUp({
-        content: 'I did not catch a message in time. Use /addmemory whenever you are ready 💛',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    await interaction.followUp({
-      content: 'Memory saved 💛',
-      ephemeral: true,
-    });
-  } catch (error) {
-    throw error;
-  }
-}
-
-async function waitForNextMemoryMessage(channel, userId) {
-  try {
-    const collected = await channel.awaitMessages({
-      filter: (message) => {
-        if (message.author.id !== userId || message.author.bot) {
-          return false;
-        }
-
-        const normalized = `${message.content || ''}`.trim().toLowerCase();
-        if (BLOCKED_MEMORY_TEXTS.has(normalized)) {
-          return false;
-        }
-
-        return true;
-      },
-      max: 1,
-    });
-
-    return collected.first() ?? null;
-  } catch {
-    return null;
   }
 }
 
@@ -538,7 +360,7 @@ async function sendDailyReminder(client, config) {
       config.tagUserIds.length > 0 ? `${config.tagUserIds.map((id) => `<@${id}>`).join(' ')}\n\n` : '';
 
     await channel.send({
-      content: `${mentions}💛 Memory Vault Time\n\nWhat’s one thing from today worth keeping?\n\nUse /addmemory to save it.\n\nTiny memories count too.`,
+      content: `${mentions}💛 Memory Vault Time\n\nWhat’s one thing from today worth keeping?\n\nShare it here when you feel ready.\n\nTiny memories count too.`,
       allowedMentions: { users: config.tagUserIds, parse: [] },
     });
   } catch (error) {
