@@ -160,9 +160,11 @@ async function handleAddAction(interaction, config, activeFlows) {
   activeFlows.add(interaction.user.id);
 
   try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     const channel = await getLoveActionsChannel(interaction.client, config.channelId);
     if (!channel) {
-      await interaction.reply({
+      await interaction.followUp({
         content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.',
         flags: MessageFlags.Ephemeral,
       });
@@ -191,7 +193,6 @@ async function handleAddAction(interaction, config, activeFlows) {
 
     const actionMessage = await waitForNextUserMessage(interaction.channel, interaction.user.id);
     if (!actionMessage) {
-      await sendEphemeralPrompt(interaction, { content: 'Love action flow timed out 💛' });
       return;
     }
 
@@ -202,7 +203,7 @@ async function handleAddAction(interaction, config, activeFlows) {
       `Author ID: ${interaction.user.id}`,
       `Date: ${formatDate(new Date())}`,
       '',
-      fitText(actionMessage.content, 1500),
+      actionMessage.content,
     ].join('\n');
 
     await archiveThread.send({ content: entry, allowedMentions: { parse: [] } });
@@ -238,9 +239,11 @@ async function handleGetAction(interaction, config, activeFlows) {
   activeFlows.add(interaction.user.id);
 
   try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     const channel = await getLoveActionsChannel(interaction.client, config.channelId);
     if (!channel) {
-      await interaction.reply({ content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
+      await interaction.followUp({ content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -328,9 +331,11 @@ async function handleRetireAction(interaction, config, activeFlows) {
   activeFlows.add(interaction.user.id);
 
   try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     const channel = await getLoveActionsChannel(interaction.client, config.channelId);
     if (!channel) {
-      await interaction.reply({ content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
+      await interaction.followUp({ content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -339,7 +344,7 @@ async function handleRetireAction(interaction, config, activeFlows) {
     const mine = actions.filter((action) => action.authorId === interaction.user.id);
 
     if (mine.length === 0) {
-      await interaction.reply({ content: 'You have no saved love actions yet 💛', flags: MessageFlags.Ephemeral });
+      await interaction.followUp({ content: 'You have no saved love actions yet 💛', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -391,9 +396,11 @@ async function handleMyActions(interaction, config) {
     return;
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const channel = await getLoveActionsChannel(interaction.client, config.channelId);
   if (!channel) {
-    await interaction.reply({ content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
+    await interaction.followUp({ content: 'Love Actions channel not found. Check LOVE_ACTIONS_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -404,7 +411,7 @@ async function handleMyActions(interaction, config) {
     .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
 
   if (mine.length === 0) {
-    await interaction.reply({ content: 'You have no saved love actions yet 💛', flags: MessageFlags.Ephemeral });
+    await interaction.followUp({ content: 'You have no saved love actions yet 💛', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -417,7 +424,7 @@ async function handleMyActions(interaction, config) {
     ].join('\n');
   });
 
-  await interaction.reply({
+  await interaction.followUp({
     content: [`## My Love Actions`, `Showing latest ${lines.length} of ${mine.length}`, '', lines.join('\n\n')].join('\n'),
     flags: MessageFlags.Ephemeral,
   });
@@ -507,14 +514,12 @@ async function askChoice(interaction, options) {
   try {
     const selected = await promptMessage.awaitMessageComponent({
       filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-      time: 180000,
     });
 
     const value = selected.values[0];
     await selected.update({ content: `${prompt}\nSelected: **${truncate(value, 150)}**`, components: [] });
     return value;
   } catch {
-    await sendEphemeralPrompt(interaction, { content: 'Love action flow timed out 💛' });
     return null;
   }
 }
@@ -524,8 +529,6 @@ async function waitForNextUserMessage(channel, userId) {
     const collected = await channel.awaitMessages({
       filter: (message) => message.author.id === userId && !message.author.bot,
       max: 1,
-      time: 5 * 60 * 1000,
-      errors: ['time'],
     });
 
     return collected.first() || null;
@@ -590,14 +593,6 @@ async function fetchChannelMessages(channel, max = 500) {
   }
 
   return messages;
-}
-
-function fitText(value, maxLength) {
-  const text = `${value || ''}`.trim();
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, maxLength - 14)}...[trimmed]`;
 }
 
 function truncate(value, maxLength) {

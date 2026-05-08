@@ -310,16 +310,12 @@ async function askSelect(interaction, options) {
   try {
     const selection = await promptMessage.awaitMessageComponent({
       filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-      time: 180000,
     });
 
     const value = selection.values[0];
     await selection.update({ content: `${prompt}\nSelected: **${value}**`, components: [] });
     return value;
   } catch {
-    await sendEphemeralPrompt(interaction, {
-      content: 'Check-in timed out. You can run /mycheckin anytime 💛',
-    });
     return null;
   }
 }

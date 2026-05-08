@@ -670,7 +670,7 @@ async function onlyBoundariesReply(interaction) {
 }
 
 async function askChoice(interaction, options) {
-  const { prompt, customId, values, prebuilt = false, timeoutMs = 120000 } = options;
+  const { prompt, customId, values, prebuilt = false, timeoutMs = null } = options;
   const choices = prebuilt
     ? values
     : values.map((value) => ({ label: truncate(value, 100), value }));
@@ -701,14 +701,11 @@ async function askChoice(interaction, options) {
     await selection.update({ content: `${prompt}\nSelected: **${truncate(value, 150)}**`, components: [] });
     return value;
   } catch {
-    await sendEphemeralPrompt(interaction, {
-      content: 'Boundary flow timed out. You can start again anytime 💛',
-    });
     return null;
   }
 }
 
-async function askTextQuestions(interaction, config, questions, timeoutMs = 5 * 60 * 1000) {
+async function askTextQuestions(interaction, config, questions, timeoutMs = null) {
   if (!config.messageContentEnabled) {
     await sendEphemeralPrompt(interaction, {
       content:
@@ -736,9 +733,6 @@ async function askTextQuestions(interaction, config, questions, timeoutMs = 5 * 
 
       collected = await interaction.channel.awaitMessages(collectorOptions);
     } catch {
-      await sendEphemeralPrompt(interaction, {
-        content: 'Boundary flow timed out. You can start again anytime 💛',
-      });
       return null;
     }
 
@@ -751,48 +745,31 @@ async function askTextQuestions(interaction, config, questions, timeoutMs = 5 * 
 }
 
 function formatBoundaryEntry(entry) {
-  const data = {
-    title: fitText(entry.title, 120),
-    category: fitText(entry.category, 80),
-    status: fitText(entry.status, 60),
-    type: fitText(entry.type, 80),
-    addedBy: fitText(entry.addedBy, 80),
-    date: fitText(entry.date, 80),
-    why: fitText(entry.why, 260),
-    okay: fitText(entry.okay, 260),
-    notOkay: fitText(entry.notOkay, 260),
-    handling: fitText(entry.handling, 260),
-    notes: fitText(entry.notes, 220),
-    originalDiscussion: fitText(entry.originalDiscussion, 180),
-  };
-
-  const content = [
-    `🧭 Boundary: ${toText(data.title)}`,
-    `Category: ${toText(data.category)}`,
-    `Status: ${toText(data.status)}`,
-    `Type: ${toText(data.type)}`,
-    `Added by: ${toText(data.addedBy)}`,
-    `Added on: ${toText(data.date)}`,
+  return [
+    `🧭 Boundary: ${toText(entry.title)}`,
+    `Category: ${toText(entry.category)}`,
+    `Status: ${toText(entry.status)}`,
+    `Type: ${toText(entry.type)}`,
+    `Added by: ${toText(entry.addedBy)}`,
+    `Added on: ${toText(entry.date)}`,
     '',
     'Why it matters:',
-    toText(data.why),
+    toText(entry.why),
     '',
     'What is okay:',
-    toText(data.okay),
+    toText(entry.okay),
     '',
     'What is not okay:',
-    toText(data.notOkay),
+    toText(entry.notOkay),
     '',
     'Handling mistakes/misunderstandings:',
-    toText(data.handling),
+    toText(entry.handling),
     '',
     'Notes/context:',
-    toText(data.notes),
+    toText(entry.notes),
     '',
-    `Original discussion: ${toText(data.originalDiscussion)}`,
+    `Original discussion: ${toText(entry.originalDiscussion)}`,
   ].join('\n');
-
-  return fitText(content, 1990);
 }
 
 function isBoundaryEntry(content) {
@@ -1006,13 +983,6 @@ function extractLineValue(content, label) {
   return line.slice(label.length + 1).trim();
 }
 
-function fitText(value, maxLength) {
-  const text = toText(value);
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, Math.max(0, maxLength - 14))}...[trimmed]`;
-}
 
 module.exports = {
   setupBoundaries,

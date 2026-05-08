@@ -196,7 +196,6 @@ async function handleAddMemory(interaction, config) {
   try {
     const flowInteraction = await response.awaitMessageComponent({
       filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-      time: 120000,
     });
 
     selectedFlow = flowInteraction.customId;
@@ -243,7 +242,6 @@ async function handleAddMemory(interaction, config) {
     const guidedSelectorMessage = await interaction.fetchReply();
     const guidedTypeInteraction = await guidedSelectorMessage.awaitMessageComponent({
       filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-      time: 120000,
     });
 
     const type = guidedTypeInteraction.values[0];
@@ -276,14 +274,6 @@ async function handleAddMemory(interaction, config) {
       ephemeral: true,
     });
   } catch (error) {
-    if (error?.name === 'Error' && `${error.message}`.includes('time')) {
-      await interaction.followUp({
-        content: 'That timed out. Use /addmemory when you want to try again 💛',
-        ephemeral: true,
-      });
-      return;
-    }
-
     throw error;
   }
 }
@@ -293,8 +283,6 @@ async function waitForNextMemoryMessage(channel, userId) {
     const collected = await channel.awaitMessages({
       filter: (message) => message.author.id === userId && !message.author.bot,
       max: 1,
-      time: 5 * 60 * 1000,
-      errors: ['time'],
     });
 
     return collected.first() ?? null;
