@@ -21,6 +21,7 @@ const CANCEL_CHECKIN_COMMAND = new SlashCommandBuilder()
   .setDescription('Cancel your current check-in flow');
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
+const CUSTOM_CHOICE_VALUE = '__custom__';
 
 const MOOD_OPTIONS = [
   { label: '😊 Good', value: '😊 Good' },
@@ -31,6 +32,7 @@ const MOOD_OPTIONS = [
   { label: '😔 Sad', value: '😔 Sad' },
   { label: '😡 Irritated', value: '😡 Irritated' },
   { label: '💔 Overwhelmed', value: '💔 Overwhelmed' },
+  { label: '✍️ Write your own', value: CUSTOM_CHOICE_VALUE },
 ];
 
 const SUPPORT_OPTIONS = [
@@ -42,6 +44,7 @@ const SUPPORT_OPTIONS = [
   { label: '🌫 Just expressing', value: '🌫 Just expressing' },
   { label: '⏳ Space / time', value: '⏳ Space / time' },
   { label: '❌ Skip support preference', value: '❌ Skip support preference' },
+  { label: '✍️ Write your own', value: CUSTOM_CHOICE_VALUE },
 ];
 
 const SUPPORT_IDEA_BY_PREF = {
@@ -226,6 +229,25 @@ async function handleMyCheckInCommand(interaction, config, activeFlowControls) {
     return;
   }
 
+  const partnerKey = partnerKeyByUserId(interaction.user.id, config);
+  if (!partnerKey) {
+    await interaction.reply({
+      content: 'This check-in is only for Principe and Principessa 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const state = parsePanelState(panel.content, config);
+  const currentRow = partnerKey === 'partner1' ? state.partner1Row : state.partner2Row;
+  if (!isPendingRow(currentRow)) {
+    await interaction.reply({
+      content: `Your current check-in is: ${currentRow}\nRun /mycheckin again only if you want to update it 💛`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await runCheckInFlow(interaction, panel, config, activeFlowControls);
 }
 
@@ -380,7 +402,30 @@ async function askSelect(interaction, options, activeFlowControls) {
 
     const value = selection.values[0];
     await selection.update({ content: `${prompt}\nSelected: **${value}**`, components: [] });
-    return value;
+    if (value !== CUSTOM_CHOICE_VALUE) {
+      return value;
+    }
+
+    await sendEphemeralPrompt(interaction, {
+      content: `Write your own answer as your next message in this channel 💛`,
+    });
+    const customMessage = await waitForNextUserMessage(interaction.channel, interaction.user.id);
+    if (!customMessage) {
+      return null;
+    }
+
+    const customValue = `${customMessage.content || ''}`.trim();
+    if (!customValue) {
+      return null;
+    }
+
+    try {
+      await customMessage.delete();
+    } catch {
+      // ignore when bot lacks manage message permission
+    }
+
+    return customValue;
   } catch {
     return null;
   }
@@ -428,8 +473,20 @@ function buildSupportIdeaLine(state, config) {
   const p1Done = !isPendingRow(state.partner1Row);
   const p2Done = !isPendingRow(state.partner2Row);
 
-  if ((p1Done && p2Done) || (!p1Done && !p2Done)) {
+  if (!p1Done && !p2Done) {
     return '';
+  }
+
+  if (p1Done && p2Done) {
+    const p1Need = extractSupport(state.partner1Row);
+    const p2Need = extractSupport(state.partner2Row);
+    return [
+      `Support idea for ${config.partner1Name}:`,
+      `${SUPPORT_IDEA_BY_PREF[p1Need] || SUPPORT_IDEA_BY_PREF['❌ Skip support preference']}`,
+      '',
+      `Support idea for ${config.partner2Name}:`,
+      `${SUPPORT_IDEA_BY_PREF[p2Need] || SUPPORT_IDEA_BY_PREF['❌ Skip support preference']}`,
+    ].join('\n');
   }
 
   const checkedInPartner = p1Done ? 'partner1' : 'partner2';
@@ -804,6 +861,18 @@ function waitForSelectInteraction(client, userId, customId, activeFlowControls) 
 
     client.on(Events.InteractionCreate, handler);
   });
+}
+
+async function waitForNextUserMessage(channel, userId) {
+  try {
+    const collected = await channel.awaitMessages({
+      filter: (message) => message.author.id === userId && !message.author.bot,
+      max: 1,
+    });
+    return collected.first() || null;
+  } catch {
+    return null;
+  }
 }
 
 module.exports = {
