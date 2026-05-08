@@ -511,18 +511,13 @@ async function askChoice(interaction, options) {
     new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder('Select one option').addOptions(optionList),
   );
 
-  const promptMessage = await sendEphemeralPrompt(interaction, {
+  await sendEphemeralPrompt(interaction, {
     content: prompt,
     components: [row],
   });
-  if (!promptMessage || typeof promptMessage.awaitMessageComponent !== 'function') {
-    throw new Error('Could not create an interactive prompt message for component collection.');
-  }
 
   try {
-    const selected = await promptMessage.awaitMessageComponent({
-      filter: (componentInteraction) => componentInteraction.user.id === interaction.user.id,
-    });
+    const selected = await waitForSelectInteraction(interaction.client, interaction.user.id, customId);
 
     const value = selected.values[0];
     await selected.update({ content: `${prompt}\nSelected: **${truncate(value, 150)}**`, components: [] });
@@ -626,12 +621,12 @@ function escapeRegExp(value) {
 async function sendEphemeralPrompt(interaction, payload) {
   const fullPayload = { ...payload, flags: MessageFlags.Ephemeral };
   if (interaction.replied || interaction.deferred) {
-    const response = await interaction.followUp({ ...fullPayload, withResponse: true });
-    return response?.resource?.message ?? null;
+    await interaction.followUp(fullPayload);
+    return null;
   }
 
-  const response = await interaction.reply({ ...fullPayload, withResponse: true });
-  return response?.resource?.message ?? null;
+  await interaction.reply(fullPayload);
+  return null;
 }
 
 async function safeReply(interaction, payload) {
@@ -641,6 +636,27 @@ async function safeReply(interaction, payload) {
   }
 
   await interaction.reply(payload);
+}
+
+function waitForSelectInteraction(client, userId, customId) {
+  return new Promise((resolve) => {
+    const handler = (incoming) => {
+      if (!incoming.isStringSelectMenu()) {
+        return;
+      }
+      if (incoming.user.id !== userId) {
+        return;
+      }
+      if (incoming.customId !== customId) {
+        return;
+      }
+
+      client.off(Events.InteractionCreate, handler);
+      resolve(incoming);
+    };
+
+    client.on(Events.InteractionCreate, handler);
+  });
 }
 
 module.exports = {
