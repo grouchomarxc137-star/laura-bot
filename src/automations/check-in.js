@@ -10,6 +10,7 @@ const {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
 } = require('discord.js');
+const { postRelationshipPlantUpdate } = require('./relationship-plant');
 
 const START_CHECKIN_COMMAND = new SlashCommandBuilder().setName('startcheckin').setDescription('Post today\'s daily check-in panel');
 const MY_CHECKIN_COMMAND = new SlashCommandBuilder().setName('mycheckin').setDescription('Start your check-in for today\'s panel');
@@ -47,6 +48,14 @@ const SUPPORT_OPTIONS = [
   { label: '✍️ Write your own', value: CUSTOM_CHOICE_VALUE },
 ];
 
+const PLANT_STATE_OPTIONS = [
+  { label: '🥀 1 → Wilted', value: 'Wilted' },
+  { label: '🍂 2 → Neglected', value: 'Neglected' },
+  { label: '🌿 3 → Stable', value: 'Stable' },
+  { label: '☀️ 4 → Watered & Sunned', value: 'Watered & Sunned' },
+  { label: '🌼 5 → Thriving', value: 'Thriving' },
+];
+
 const SUPPORT_IDEA_BY_PREF = {
   '🫂 Comfort': 'Ask softly: “What would feel comforting right now?”',
   '💗 Affection': 'Offer gentle affection: a hug, a hand squeeze, or soft closeness.',
@@ -72,6 +81,9 @@ function setupCheckIn(client) {
     timezone: process.env.TIMEZONE || 'Europe/Rome',
     hour: toSafeNumber(process.env.DAILY_CHECKIN_HOUR, 21),
     minute: toSafeNumber(process.env.DAILY_CHECKIN_MINUTE, 0),
+    relationshipChannelId: process.env.RELATIONSHIP_CHANNEL_ID || '1503086899894423552',
+    relationshipChannelName: process.env.RELATIONSHIP_CHANNEL_NAME || 'our-relationship',
+    plantThreadName: process.env.RELATIONSHIP_PLANT_THREAD_NAME || 'Caring for our plant🪴💛',
   };
 
   const required = ['CLIENT_ID', 'GUILD_ID', 'CHECKIN_CHANNEL_ID', 'PARTNER_1_USER_ID', 'PARTNER_2_USER_ID'];
@@ -301,7 +313,16 @@ async function handleTestSecondCheckInCommand(interaction, config, activeFlowCon
     return;
   }
 
-  await updatePanelMessage(panel, config, 'partner2', mood, support);
+  const plantState = await askSelect(interaction, {
+    prompt: `Test as ${config.partner2Name}: how does your plant feel today?`,
+    customId: 'checkin_test_second_plant',
+    options: PLANT_STATE_OPTIONS,
+  }, activeFlowControls);
+  if (!plantState) {
+    return;
+  }
+
+  await updatePanelMessage(panel, config, 'partner2', mood, support, plantState);
   await sendEphemeralPrompt(interaction, {
     content: `Saved test check-in for ${config.partner2Name} 💛`,
   });
@@ -355,14 +376,14 @@ async function runCheckInFlow(interaction, panelMessage, config, activeFlowContr
   activeFlowControls.set(interaction.user.id, control);
 
   try {
-    const result = await askMoodAndSupport(interaction, partnerKey, activeFlowControls);
+    const result = await askMoodSupportAndPlant(interaction, partnerKey, activeFlowControls);
     if (!result) {
       return;
     }
 
-    const { mood, support } = result;
+    const { mood, support, plantState } = result;
 
-    await updatePanelMessage(panelMessage, config, partnerKey, mood, support);
+    await updatePanelMessage(panelMessage, config, partnerKey, mood, support, plantState);
 
     await sendEphemeralPrompt(interaction, {
       content: 'Check-in saved 💛',
@@ -404,9 +425,10 @@ async function askSelect(interaction, options, activeFlowControls) {
   return value;
 }
 
-async function askMoodAndSupport(interaction, partnerKey, activeFlowControls) {
+async function askMoodSupportAndPlant(interaction, partnerKey, activeFlowControls) {
   const moodId = `checkin_mood_${partnerKey}`;
   const supportId = `checkin_support_${partnerKey}`;
+  const plantId = `checkin_plant_${partnerKey}`;
 
   const moodRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId(moodId).setPlaceholder('Mood').addOptions(MOOD_OPTIONS),
@@ -414,10 +436,13 @@ async function askMoodAndSupport(interaction, partnerKey, activeFlowControls) {
   const supportRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId(supportId).setPlaceholder('Support').addOptions(SUPPORT_OPTIONS),
   );
+  const plantRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(plantId).setPlaceholder('How does our plant feel?').addOptions(PLANT_STATE_OPTIONS),
+  );
 
   await sendEphemeralPrompt(interaction, {
-    content: 'How are you feeling right now, and what support would help most? Pick mood first, then support 💛',
-    components: [moodRow, supportRow],
+    content: 'How are you feeling right now, what support would help most, and how does our plant feel today? 💛',
+    components: [moodRow, supportRow, plantRow],
   });
 
   const moodSelection = await waitForSelectInteractionAny(
@@ -450,11 +475,26 @@ async function askMoodAndSupport(interaction, partnerKey, activeFlowControls) {
     return null;
   }
 
+  const plantSelection = await waitForSelectInteractionAny(
+    interaction.client,
+    interaction.user.id,
+    [plantId],
+    activeFlowControls,
+  );
+  if (!plantSelection) {
+    return null;
+  }
+
+  const plantState = await resolveSelectValue(interaction, plantSelection, 'plant state');
+  if (!plantState) {
+    return null;
+  }
+
   await sendEphemeralPrompt(interaction, {
-    content: `Saved selections:\nMood: **${mood}**\nSupport: **${support}**`,
+    content: `Saved selections:\nMood: **${mood}**\nSupport: **${support}**\nPlant: **${plantState}**`,
   });
 
-  return { mood, support };
+  return { mood, support, plantState };
 }
 
 async function resolveSelectValue(interaction, selection, label) {
@@ -510,14 +550,14 @@ async function handleCancelCheckInCommand(interaction, activeFlowControls) {
   });
 }
 
-async function updatePanelMessage(message, config, partnerKey, mood, support) {
+async function updatePanelMessage(message, config, partnerKey, mood, support, plantState) {
   const state = parsePanelState(message.content, config);
   const wasBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
 
   if (partnerKey === 'partner1') {
-    state.partner1Row = `${mood} | ${support}`;
+    state.partner1Row = `${mood} | ${support} | ${plantState}`;
   } else {
-    state.partner2Row = `${mood} | ${support}`;
+    state.partner2Row = `${mood} | ${support} | ${plantState}`;
   }
 
   const supportIdeaLine = buildSupportIdeaLine(state, config);
@@ -529,6 +569,8 @@ async function updatePanelMessage(message, config, partnerKey, mood, support) {
   await message.edit({ content: newContent, components });
 
   if (!wasBothDone && isBothDone) {
+    await maybePostRelationshipPlantUpdate(message, config, state);
+
     await message.channel.send({
       content: newContent,
       components,
@@ -541,6 +583,28 @@ async function updatePanelMessage(message, config, partnerKey, mood, support) {
       // ignore if message cannot be deleted
     }
   }
+}
+
+async function maybePostRelationshipPlantUpdate(message, config, state) {
+  const partner1PlantState = extractPlantState(state.partner1Row);
+  const partner2PlantState = extractPlantState(state.partner2Row);
+  if (!partner1PlantState || !partner2PlantState) {
+    return;
+  }
+
+  await postRelationshipPlantUpdate({
+    client: message.client,
+    guildId: config.guildId,
+    relationshipChannelId: config.relationshipChannelId,
+    relationshipChannelName: config.relationshipChannelName,
+    threadName: config.plantThreadName,
+    timezone: config.timezone,
+    date: state.date,
+    partner1Name: config.partner1Name,
+    partner2Name: config.partner2Name,
+    partner1State: partner1PlantState,
+    partner2State: partner2PlantState,
+  });
 }
 
 function buildSupportIdeaLine(state, config) {
@@ -769,6 +833,11 @@ function extractMood(row) {
 function extractSupport(row) {
   const parts = `${row || ''}`.split('|').map((part) => part.trim());
   return parts[1] || '❌ Skip support preference';
+}
+
+function extractPlantState(row) {
+  const parts = `${row || ''}`.split('|').map((part) => part.trim());
+  return parts[2] || '';
 }
 
 function isPendingRow(row) {
