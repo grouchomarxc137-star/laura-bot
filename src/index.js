@@ -1,9 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { setupMemoryVault } = require('./automations/memory-vault');
-const { setupBoundaries } = require('./automations/boundaries');
 const { setupCheckIn } = require('./automations/check-in');
-const { setupLoveActions } = require('./automations/love-actions');
 
 const REQUIRED_ENV = ['DISCORD_TOKEN'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -30,9 +28,7 @@ if (process.env.ENABLE_MESSAGE_CONTENT_INTENT !== 'true') {
 }
 
 setupMemoryVault(client);
-setupBoundaries(client);
 setupCheckIn(client);
-setupLoveActions(client);
 
 client.once('ready', () => {
   console.log(`[startup] Logged in as ${client.user.tag}`);

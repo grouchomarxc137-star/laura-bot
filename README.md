@@ -1,6 +1,6 @@
 # Laura Bot
 
-Discord bot automation for relationship channels/modules.
+Discord bot automation for the **Memory Vault** channel.
 
 ## Project structure
 
@@ -8,11 +8,11 @@ Discord bot automation for relationship channels/modules.
 src/
 ├─ index.js
 └─ automations/
-   ├─ memory-vault.js
-   ├─ boundaries.js
-   ├─ check-in.js
-   └─ love-actions.js
+   └─ memory-vault.js
 ```
+
+- `src/index.js`: creates the Discord client, registers Memory Vault automation, logs in.
+- `src/automations/memory-vault.js`: all Memory Vault logic in one file.
 
 ## Environment variables
 
@@ -21,50 +21,66 @@ Required:
 - `DISCORD_TOKEN`
 - `CLIENT_ID`
 - `GUILD_ID`
-- `LOVE_ACTIONS_CHANNEL_ID`
-- `PARTNER_1_USER_ID`
-- `PARTNER_1_NAME`
-- `PARTNER_2_USER_ID`
-- `PARTNER_2_NAME`
+- `MEMORY_VAULT_CHANNEL_ID`
+
+Optional:
+
+- `TIMEZONE` (default: `Europe/Rome`)
+- `DAILY_MEMORY_REMINDER_HOUR` (default: `22`)
+- `DAILY_MEMORY_REMINDER_MINUTE` (default: `0`)
+- `ENABLE_MESSAGE_CONTENT_INTENT` (`true` to enable full text memory capture)
+- `MEMORY_VAULT_TAG_USER_IDS` (comma-separated Discord user IDs to mention in daily reminder, e.g. `123...,456...`)
 
 ## Discord permissions needed
 
 - Send Messages
 - Read Message History
 - Use Slash Commands
-- View Channels
+- Add Reactions
 - Create Public Threads
 - Send Messages in Threads
+- View Channels
+- Manage Threads (recommended for update/archive fallback behavior)
+- Manage Messages (required if you want guided answer messages auto-deleted after save/update/request)
 
 ## Commands
 
-- `/addaction`
-  - Works only in `LOVE_ACTIONS_CHANNEL_ID`.
-  - Saves a private love action into the `Love Actions Archive` thread.
+- `/addmemory`
+  - Works only in `MEMORY_VAULT_CHANNEL_ID`.
+  - Lets user choose **Free** or **Guided** flow.
+  - Captures only the next message from that same user in that same channel.
+  - Confirms with `Memory saved 💛`.
 
-- `/action`
-  - Works only in `LOVE_ACTIONS_CHANNEL_ID`.
-  - Returns one matching action written by the other partner only.
+- `/randommemory`
+  - Works only in `MEMORY_VAULT_CHANNEL_ID`.
+  - Fetches recent channel history (up to around 500 messages).
+  - Ignores bot/empty/command-like messages.
+  - Posts one random valid memory with author/date/content/attachments/original link.
 
-- `/actiondone`
-  - Warm completion acknowledgment.
+## Memory Vault behavior
 
-- `/retireaction`
-  - Lets you retire one of your own actions.
+- Daily reminder at configured local time:
 
-- `/myactions`
-  - Shows only actions written by you.
+```text
+💛 Memory Vault Time
 
-## Love Actions behavior
+What’s one thing from today worth keeping?
 
-- Love actions are secretly written by each partner for the other.
-- The bot only gives users actions written by their partner.
-- Actions are stored as Discord messages in `Love Actions Archive` (no database/json/local storage).
-- Author ID is stored internally for filtering, but never shown when delivering `/action`.
+Use /addmemory to save it.
+
+Tiny memories count too.
+```
+
+- Favorite memories:
+  - When someone reacts with `⭐` to a valid memory in Memory Vault channel,
+  - Bot copies memory into `Favorite Memories` thread (creates it if needed),
+  - Includes favorited by, original author/date/link, text and attachments,
+  - Avoids duplicates by checking recent thread messages for the original URL.
 
 ## Railway deployment notes
 
 - Set all required environment variables in Railway project settings.
-- Ensure bot has required channel/thread permissions.
-- Deploy from GitHub with startup command `node index.js`.
-- Slash commands are registered to the configured guild at startup.
+- If you set `ENABLE_MESSAGE_CONTENT_INTENT=true`, also enable **Message Content Intent** in the Discord Developer Portal (`Bot` tab), otherwise login may fail with `Used disallowed intents`.
+- Ensure bot has the required permissions in your Discord server/channel.
+- Deploy from GitHub as usual; startup command can be default `node index.js`.
+- Slash commands are registered to the configured guild at startup.what

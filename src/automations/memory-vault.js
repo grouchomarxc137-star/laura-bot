@@ -11,14 +11,6 @@ const RANDOM_MEMORY_COMMAND = new SlashCommandBuilder()
   .setName('randommemory')
   .setDescription('Show a random memory from the Memory Vault');
 
-const TEST_WEEKLY_RECAP_COMMAND = new SlashCommandBuilder()
-  .setName('testweeklyrecap')
-  .setDescription('Force-run the weekly recap now (for testing)');
-
-const TEST_DAILY_REMINDER_COMMAND = new SlashCommandBuilder()
-  .setName('testdailyreminder')
-  .setDescription('Send the daily reminder now (for testing)');
-
 function setupMemoryVault(client) {
   const config = {
     clientId: process.env.CLIENT_ID,
@@ -39,9 +31,6 @@ function setupMemoryVault(client) {
     );
   }
 
-  let dailyTimer = null;
-  let weeklyTimer = null;
-
   client.once(Events.ClientReady, async () => {
     if (!isConfigured) {
       console.warn('[memory-vault] Skipping setup because required env vars are missing.');
@@ -49,11 +38,10 @@ function setupMemoryVault(client) {
     }
 
     await registerCommands(client, config);
-    scheduleDailyReminder(client, config, () => (dailyTimer = null), (timer) => (dailyTimer = timer));
-    scheduleWeeklyRecap(client, config, () => (weeklyTimer = null), (timer) => (weeklyTimer = timer));
+    scheduleDailyReminder(client, config);
 
     console.log(
-      `[memory-vault] Ready | timezone=${config.timezone} daily=${String(config.dailyHour).padStart(2, '0')}:${String(config.dailyMinute).padStart(2, '0')} weekly=Sunday 22:00`,
+      `[memory-vault] Ready | timezone=${config.timezone} daily=${String(config.dailyHour).padStart(2, '0')}:${String(config.dailyMinute).padStart(2, '0')}`,
     );
   });
 
@@ -69,14 +57,6 @@ function setupMemoryVault(client) {
 
       if (interaction.commandName === 'randommemory') {
         await handleRandomMemory(interaction, config);
-      }
-
-      if (interaction.commandName === 'testweeklyrecap') {
-        await handleTestWeeklyRecap(interaction, config);
-      }
-
-      if (interaction.commandName === 'testdailyreminder') {
-        await handleTestDailyReminder(interaction, config);
       }
     } catch (error) {
       console.error('[memory-vault] Interaction handling error:', error);
@@ -110,21 +90,16 @@ async function registerCommands(client, config) {
   try {
     const route = Routes.applicationGuildCommands(config.clientId, config.guildId);
     const existing = await rest.get(route);
-    const incoming = [
-      RANDOM_MEMORY_COMMAND.toJSON(),
-      TEST_WEEKLY_RECAP_COMMAND.toJSON(),
-      TEST_DAILY_REMINDER_COMMAND.toJSON(),
-    ];
+    const incoming = [RANDOM_MEMORY_COMMAND.toJSON()];
     const incomingNames = new Set(incoming.map((command) => command.name));
+    const removedLegacy = new Set(['testweeklyrecap', 'testdailyreminder']);
     const merged = [
-      ...existing.filter((command) => !incomingNames.has(command.name)),
+      ...existing.filter((command) => !incomingNames.has(command.name) && !removedLegacy.has(command.name)),
       ...incoming,
     ];
 
     await rest.put(route, { body: merged });
-    console.log(
-      '[memory-vault] Slash commands registered: /randommemory, /testweeklyrecap, /testdailyreminder',
-    );
+    console.log('[memory-vault] Slash commands registered: /randommemory');
   } catch (error) {
     console.error('[memory-vault] Failed to register slash commands:', error);
   }
@@ -164,40 +139,6 @@ async function handleRandomMemory(interaction, config) {
   });
 }
 
-async function handleTestWeeklyRecap(interaction, config) {
-  if (interaction.channelId !== config.memoryVaultChannelId) {
-    await interaction.reply({
-      content: 'This command is only for the Memory Vault 💛',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  await interaction.reply({
-    content: 'Running weekly recap test now. I will create a recap thread from the last 7 days.',
-    ephemeral: true,
-  });
-
-  await postWeeklyRecap(interaction.client, config, { force: true });
-}
-
-async function handleTestDailyReminder(interaction, config) {
-  if (interaction.channelId !== config.memoryVaultChannelId) {
-    await interaction.reply({
-      content: 'This command is only for the Memory Vault 💛',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  await interaction.reply({
-    content: 'Sending daily reminder test now 💛',
-    ephemeral: true,
-  });
-
-  await sendDailyReminder(interaction.client, config);
-}
-
 async function handleFavoriteReaction(reaction, user, config) {
   try {
     if (user.bot) {
@@ -209,7 +150,6 @@ async function handleFavoriteReaction(reaction, user, config) {
     }
 
     const message = reaction.message;
-
     if (!message) {
       return;
     }
@@ -318,31 +258,13 @@ async function threadContainsLink(thread, url) {
   }
 }
 
-function scheduleDailyReminder(client, config, clearTimer, storeTimer) {
-  const schedule = async () => {
-    const delay = millisUntilNextLocalTime(config.timezone, config.dailyHour, config.dailyMinute, null);
-    const timer = setTimeout(async () => {
-      clearTimer();
+function scheduleDailyReminder(client, config) {
+  const schedule = () => {
+    const delay = millisUntilNextLocalTime(config.timezone, config.dailyHour, config.dailyMinute);
+    setTimeout(async () => {
       await sendDailyReminder(client, config);
       schedule();
     }, delay);
-
-    storeTimer(timer);
-  };
-
-  schedule();
-}
-
-function scheduleWeeklyRecap(client, config, clearTimer, storeTimer) {
-  const schedule = async () => {
-    const delay = millisUntilNextLocalTime(config.timezone, 22, 0, 0);
-    const timer = setTimeout(async () => {
-      clearTimer();
-      await postWeeklyRecap(client, config);
-      schedule();
-    }, delay);
-
-    storeTimer(timer);
   };
 
   schedule();
@@ -365,79 +287,6 @@ async function sendDailyReminder(client, config) {
     });
   } catch (error) {
     console.error('[memory-vault] Failed to send daily reminder:', error);
-  }
-}
-
-async function postWeeklyRecap(client, config, options = {}) {
-  const { force = false } = options;
-
-  try {
-    const now = new Date();
-    const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: config.timezone }).format(now);
-    const hour = Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: config.timezone }).format(now));
-
-    if (!force && (weekday !== 'Sunday' || hour !== 22)) {
-      return;
-    }
-
-    const channel = await getMemoryVaultChannel(client, config.memoryVaultChannelId);
-    if (!channel) {
-      console.warn('[memory-vault] Weekly recap skipped: Memory Vault channel missing.');
-      return;
-    }
-
-    const threadName = buildWeeklyThreadName(now, config.timezone);
-    const thread = await channel.threads.create({
-      name: threadName,
-      autoArchiveDuration: 10080,
-      reason: 'Weekly Memory Vault recap',
-    });
-
-    const oneWeekAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000;
-    const history = await fetchChannelMessages(channel, 500);
-    const memories = history
-      .filter((message) => message.createdTimestamp >= oneWeekAgo)
-      .filter((message) => isValidMemoryMessage(message));
-
-    if (memories.length === 0) {
-      await thread.send('No memories were found this week, and that’s okay 💛');
-      return;
-    }
-
-    const sorted = memories.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-    await thread.send(`Weekly recap for the last 7 days (${sorted.length} memories) 💛`);
-
-    for (const memory of sorted) {
-      const embed = buildMemoryEmbed(memory, 'Memory');
-      const { imageUrls, otherAttachmentLinks } = splitAttachments(memory);
-      if (imageUrls.length > 0) {
-        embed.setImage(imageUrls[0]);
-      }
-      const content = [
-        `Date: ${formatDateTime(memory.createdAt, config.timezone)}`,
-        `Author: **${safeAuthorName(memory.author)}**`,
-        `Original message: ${memory.url}`,
-        otherAttachmentLinks ? `Attachments:\n${otherAttachmentLinks}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      await thread.send({
-        content,
-        embeds: [embed],
-        allowedMentions: { parse: [] },
-      });
-
-      if (imageUrls.length > 1) {
-        await thread.send({
-          content: imageUrls.slice(1).join('\n'),
-          allowedMentions: { parse: [] },
-        });
-      }
-    }
-  } catch (error) {
-    console.error('[memory-vault] Failed weekly recap:', error);
   }
 }
 
@@ -510,16 +359,6 @@ function buildMemoryEmbed(message, title) {
     .setTimestamp(message.createdAt);
 }
 
-function formatAttachmentLinks(message) {
-  if (!message.attachments || message.attachments.size === 0) {
-    return '';
-  }
-
-  return message.attachments
-    .map((attachment) => `${attachment.name || 'attachment'}: ${attachment.url}`)
-    .join('\n');
-}
-
 function splitAttachments(message) {
   if (!message.attachments || message.attachments.size === 0) {
     return { imageUrls: [], otherAttachmentLinks: '' };
@@ -557,58 +396,29 @@ function parseUserIds(raw) {
     .filter((part) => /^\d{16,20}$/.test(part));
 }
 
-function buildWeeklyThreadName(date, timezone) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: timezone,
-  }).formatToParts(date);
-
-  const year = parts.find((part) => part.type === 'year')?.value || `${date.getUTCFullYear()}`;
-  const month = parts.find((part) => part.type === 'month')?.value || 'Unknown';
-  const day = Number(parts.find((part) => part.type === 'day')?.value || '1');
-  const week = Math.ceil(day / 7);
-
-  return `${year} • ${month} • Week ${week}`;
-}
-
-function millisUntilNextLocalTime(timeZone, hour, minute, dayOfWeek) {
+function millisUntilNextLocalTime(timeZone, hour, minute) {
   const now = new Date();
 
-  for (let addDays = 0; addDays <= 8; addDays += 1) {
+  for (let addDays = 0; addDays <= 2; addDays += 1) {
     const candidate = new Date(now.getTime() + addDays * 24 * 60 * 60 * 1000);
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
     }).formatToParts(candidate);
 
     const year = Number(parts.find((p) => p.type === 'year')?.value);
     const month = Number(parts.find((p) => p.type === 'month')?.value);
     const day = Number(parts.find((p) => p.type === 'day')?.value);
-    const weekday = parts.find((p) => p.type === 'weekday')?.value;
 
-    if (dayOfWeek !== null && dayOfWeek !== undefined) {
-      const weekdayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(weekday);
-      if (weekdayIndex !== dayOfWeek) {
-        continue;
-      }
-    }
-
-    const candidateUTC = zonedTimeToUtc({ year, month, day, hour, minute, second: 0 }, timeZone);
-    if (candidateUTC.getTime() > now.getTime()) {
-      return candidateUTC.getTime() - now.getTime();
+    const target = zonedTimeToUtc({ year, month, day, hour, minute, second: 0 }, timeZone);
+    if (target.getTime() > now.getTime()) {
+      return target.getTime() - now.getTime();
     }
   }
 
-  return 60 * 1000;
+  return 60_000;
 }
 
 function zonedTimeToUtc(parts, timeZone) {
