@@ -355,23 +355,12 @@ async function runCheckInFlow(interaction, panelMessage, config, activeFlowContr
   activeFlowControls.set(interaction.user.id, control);
 
   try {
-    const mood = await askSelect(interaction, {
-      prompt: 'How are you feeling right now?',
-      customId: `checkin_mood_${partnerKey}`,
-      options: MOOD_OPTIONS,
-    }, activeFlowControls);
-    if (!mood) {
+    const result = await askMoodAndSupport(interaction, partnerKey, activeFlowControls);
+    if (!result) {
       return;
     }
 
-    const support = await askSelect(interaction, {
-      prompt: 'What support would help most right now?',
-      customId: `checkin_support_${partnerKey}`,
-      options: SUPPORT_OPTIONS,
-    }, activeFlowControls);
-    if (!support) {
-      return;
-    }
+    const { mood, support } = result;
 
     await updatePanelMessage(panelMessage, config, partnerKey, mood, support);
 
@@ -394,46 +383,109 @@ async function askSelect(interaction, options, activeFlowControls) {
     components: [row],
   });
 
-  try {
-    const selection = await waitForSelectInteraction(
-      interaction.client,
-      interaction.user.id,
-      customId,
-      activeFlowControls,
-    );
-    if (!selection) {
-      return null;
-    }
-
-    const value = selection.values[0];
-    await selection.update({ content: `${prompt}\nSelected: **${value}**`, components: [] });
-    if (value !== CUSTOM_CHOICE_VALUE) {
-      return value;
-    }
-
-    await sendEphemeralPrompt(interaction, {
-      content: `Write your own answer as your next message in this channel 💛`,
-    });
-    const customMessage = await waitForNextUserMessage(interaction.channel, interaction.user.id);
-    if (!customMessage) {
-      return null;
-    }
-
-    const customValue = `${customMessage.content || ''}`.trim();
-    if (!customValue) {
-      return null;
-    }
-
-    try {
-      await customMessage.delete();
-    } catch {
-      // ignore when bot lacks manage message permission
-    }
-
-    return customValue;
-  } catch {
+  const selection = await waitForSelectInteractionAny(
+    interaction.client,
+    interaction.user.id,
+    [customId],
+    activeFlowControls,
+  );
+  if (!selection) {
     return null;
   }
+
+  const value = await resolveSelectValue(interaction, selection, 'answer');
+  if (!value) {
+    return null;
+  }
+
+  await sendEphemeralPrompt(interaction, {
+    content: `${prompt}\nSelected: **${value}**`,
+  });
+  return value;
+}
+
+async function askMoodAndSupport(interaction, partnerKey, activeFlowControls) {
+  const moodId = `checkin_mood_${partnerKey}`;
+  const supportId = `checkin_support_${partnerKey}`;
+
+  const moodRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(moodId).setPlaceholder('Mood').addOptions(MOOD_OPTIONS),
+  );
+  const supportRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(supportId).setPlaceholder('Support').addOptions(SUPPORT_OPTIONS),
+  );
+
+  await sendEphemeralPrompt(interaction, {
+    content: 'How are you feeling right now, and what support would help most? Pick mood first, then support 💛',
+    components: [moodRow, supportRow],
+  });
+
+  const moodSelection = await waitForSelectInteractionAny(
+    interaction.client,
+    interaction.user.id,
+    [moodId],
+    activeFlowControls,
+  );
+  if (!moodSelection) {
+    return null;
+  }
+
+  const mood = await resolveSelectValue(interaction, moodSelection, 'mood');
+  if (!mood) {
+    return null;
+  }
+
+  const supportSelection = await waitForSelectInteractionAny(
+    interaction.client,
+    interaction.user.id,
+    [supportId],
+    activeFlowControls,
+  );
+  if (!supportSelection) {
+    return null;
+  }
+
+  const support = await resolveSelectValue(interaction, supportSelection, 'support preference');
+  if (!support) {
+    return null;
+  }
+
+  await sendEphemeralPrompt(interaction, {
+    content: `Saved selections:\nMood: **${mood}**\nSupport: **${support}**`,
+  });
+
+  return { mood, support };
+}
+
+async function resolveSelectValue(interaction, selection, label) {
+  const value = selection.values[0];
+  if (value !== CUSTOM_CHOICE_VALUE) {
+    await selection.deferUpdate();
+    return value;
+  }
+
+  await selection.reply({
+    content: `Write your own ${label} as your next message in this channel 💛`,
+    flags: MessageFlags.Ephemeral,
+  });
+
+  const customMessage = await waitForNextUserMessage(interaction.channel, interaction.user.id);
+  if (!customMessage) {
+    return null;
+  }
+
+  const customValue = `${customMessage.content || ''}`.trim();
+  if (!customValue) {
+    return null;
+  }
+
+  try {
+    await customMessage.delete();
+  } catch {
+    // ignore when bot lacks manage message permission
+  }
+
+  return customValue;
 }
 
 async function handleCancelCheckInCommand(interaction, activeFlowControls) {
@@ -905,7 +957,8 @@ async function safeReply(interaction, payload) {
   await interaction.reply(payload);
 }
 
-function waitForSelectInteraction(client, userId, customId, activeFlowControls) {
+function waitForSelectInteractionAny(client, userId, customIds, activeFlowControls) {
+  const allowedCustomIds = new Set(customIds);
   return new Promise((resolve) => {
     let settled = false;
 
@@ -929,7 +982,7 @@ function waitForSelectInteraction(client, userId, customId, activeFlowControls) 
       if (incoming.user.id !== userId) {
         return;
       }
-      if (incoming.customId !== customId) {
+      if (!allowedCustomIds.has(incoming.customId)) {
         return;
       }
 
