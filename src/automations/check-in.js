@@ -127,7 +127,7 @@ function setupCheckIn(client) {
 
       }
 
-      if (interaction.isButton() && interaction.customId.startsWith('checkin_do')) {
+      if (interaction.isButton() && (interaction.customId === 'checkin_do' || interaction.customId === 'checkin_archive')) {
         await handleCheckInButton(interaction, config, activeFlowControls);
       }
     } catch (error) {
@@ -326,6 +326,11 @@ async function handleCheckInButton(interaction, config, activeFlowControls) {
     return;
   }
 
+  if (interaction.customId === 'checkin_archive') {
+    await handleArchiveCheckInButton(interaction, config);
+    return;
+  }
+
   await runCheckInFlow(interaction, interaction.message, config, activeFlowControls);
 }
 
@@ -455,7 +460,6 @@ async function handleCancelCheckInCommand(interaction, activeFlowControls) {
 
 async function updatePanelMessage(message, config, partnerKey, mood, support) {
   const state = parsePanelState(message.content, config);
-  const wasBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
 
   if (partnerKey === 'partner1') {
     state.partner1Row = `${mood} | ${support}`;
@@ -466,18 +470,9 @@ async function updatePanelMessage(message, config, partnerKey, mood, support) {
   const supportIdeaLine = buildSupportIdeaLine(state, config);
   const careNoteLine = buildCombinedCareNote(state, config);
   const newContent = composePanelContent(config, state.date, state.partner1Row, state.partner2Row, supportIdeaLine, careNoteLine);
-
-  await message.edit({ content: newContent, components: [checkInButtonRow()] });
-
   const isBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
-  if (!wasBothDone && isBothDone) {
-    const repostContent = newContent.replace('\nUse the button below to check in 💛', '');
-    await message.channel.send({
-      content: repostContent,
-      components: [checkInButtonRow()],
-      allowedMentions: { parse: [] },
-    });
-  }
+
+  await message.edit({ content: newContent, components: [checkInButtonRow(isBothDone)] });
 }
 
 function buildSupportIdeaLine(state, config) {
@@ -557,10 +552,18 @@ function isNegativeMood(mood) {
   return ['😴 Tired', '😕 Off / weird', '😰 Anxious', '😔 Sad', '😡 Irritated', '💔 Overwhelmed'].includes(mood);
 }
 
-function checkInButtonRow() {
-  return new ActionRowBuilder().addComponents(
+function checkInButtonRow(showArchive = false) {
+  const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('checkin_do').setLabel('Do my check-in').setStyle(ButtonStyle.Primary),
   );
+
+  if (showArchive) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId('checkin_archive').setLabel('Archive check-in').setStyle(ButtonStyle.Secondary),
+    );
+  }
+
+  return row;
 }
 
 async function postDailyPanel(channel, config) {
@@ -576,9 +579,81 @@ async function postDailyPanel(channel, config) {
 
   await channel.send({
     content,
-    components: [checkInButtonRow()],
+    components: [checkInButtonRow(false)],
     allowedMentions: { parse: [] },
   });
+}
+
+async function handleArchiveCheckInButton(interaction, config) {
+  const state = parsePanelState(interaction.message.content, config);
+  const isBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
+  if (!isBothDone) {
+    await interaction.reply({
+      content: 'Archive is available after both check-ins are completed 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const archiveThread = await getOrCreateCheckInArchiveThread(interaction.message.channel);
+  if (!archiveThread) {
+    await interaction.reply({
+      content: 'Could not access the check-in archive thread. Please check my thread permissions 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const archivedContent = [
+    interaction.message.content,
+    '',
+    `Archived by: <@${interaction.user.id}>`,
+    `Archived at: ${new Date().toISOString()}`,
+  ].join('\n');
+
+  await archiveThread.send({
+    content: archivedContent,
+    allowedMentions: { parse: [] },
+  });
+
+  try {
+    await interaction.message.delete();
+  } catch {
+    // ignore delete failures; user still gets confirmation
+  }
+
+  await interaction.reply({
+    content: 'Check-in archived 💛',
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function getOrCreateCheckInArchiveThread(channel) {
+  try {
+    const active = await channel.threads.fetchActive();
+    let existing = active.threads.find((thread) => thread.name === 'Check-in archive');
+    if (existing) {
+      return existing;
+    }
+
+    const archived = await channel.threads.fetchArchived({ type: 'public', fetchAll: true });
+    existing = archived.threads.find((thread) => thread.name === 'Check-in archive');
+    if (existing) {
+      if (existing.archived) {
+        await existing.setArchived(false, 'Reopen check-in archive');
+      }
+      return existing;
+    }
+
+    return await channel.threads.create({
+      name: 'Check-in archive',
+      autoArchiveDuration: 10080,
+      reason: 'Store completed daily check-ins',
+    });
+  } catch (error) {
+    console.error('[check-in] Failed to get or create Check-in archive thread:', error);
+    return null;
+  }
 }
 
 function composePanelContent(config, date, partner1Row, partner2Row, supportIdeaLine, careNoteLine) {
