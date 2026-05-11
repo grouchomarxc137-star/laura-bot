@@ -13,13 +13,9 @@ const {
 const { postRelationshipPlantUpdate, resetPlantScore } = require('./relationship-plant');
 
 const START_CHECKIN_COMMAND = new SlashCommandBuilder().setName('startcheckin').setDescription('Post today\'s daily check-in panel');
-const MY_CHECKIN_COMMAND = new SlashCommandBuilder().setName('mycheckin').setDescription('Start your check-in for today\'s panel');
 const TEST_SECOND_CHECKIN_COMMAND = new SlashCommandBuilder()
   .setName('testsecondcheckin')
   .setDescription('Test check-in as partner 2');
-const CANCEL_CHECKIN_COMMAND = new SlashCommandBuilder()
-  .setName('cancelcheckin')
-  .setDescription('Cancel your current check-in flow');
 const RESET_PLANT_SCORE_COMMAND = new SlashCommandBuilder()
   .setName('resetplantscore')
   .setDescription('Reset relationship plant score to default (testing)');
@@ -125,20 +121,11 @@ function setupCheckIn(client) {
           return;
         }
 
-        if (interaction.commandName === 'mycheckin') {
-          await handleMyCheckInCommand(interaction, config, activeFlowControls);
-          return;
-        }
-
         if (interaction.commandName === 'testsecondcheckin') {
           await handleTestSecondCheckInCommand(interaction, config, activeFlowControls);
           return;
         }
 
-        if (interaction.commandName === 'cancelcheckin') {
-          await handleCancelCheckInCommand(interaction, activeFlowControls);
-          return;
-        }
         if (interaction.commandName === 'resetplantscore') {
           await handleResetPlantScoreCommand(interaction);
           return;
@@ -172,20 +159,33 @@ async function registerCheckInCommands(config) {
     const existing = await rest.get(route);
     const incoming = [
       START_CHECKIN_COMMAND.toJSON(),
-      MY_CHECKIN_COMMAND.toJSON(),
       TEST_SECOND_CHECKIN_COMMAND.toJSON(),
-      CANCEL_CHECKIN_COMMAND.toJSON(),
       RESET_PLANT_SCORE_COMMAND.toJSON(),
     ];
     const incomingNames = new Set(incoming.map((command) => command.name));
-    const legacyNames = new Set(['checkin', 'checkinstatus']);
+    const legacyNames = new Set([
+      'checkin',
+      'checkinstatus',
+      'mycheckin',
+      'cancelcheckin',
+      'addboundary',
+      'boundarylist',
+      'updateboundary',
+      'boundaryrequest',
+      'reviewboundaries',
+      'addaction',
+      'action',
+      'actiondone',
+      'retireaction',
+      'myactions',
+    ]);
     const merged = [
       ...existing.filter((command) => !incomingNames.has(command.name) && !legacyNames.has(command.name)),
       ...incoming,
     ];
 
     await rest.put(route, { body: merged });
-    console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin, /cancelcheckin, /resetplantscore');
+    console.log('[check-in] Slash commands registered: /startcheckin, /testsecondcheckin, /resetplantscore');
   } catch (error) {
     console.error('[check-in] Failed to register slash commands:', error);
   }
@@ -262,7 +262,7 @@ async function handleMyCheckInCommand(interaction, config, activeFlowControls) {
   const currentRow = partnerKey === 'partner1' ? state.partner1Row : state.partner2Row;
   if (!isPendingRow(currentRow)) {
     await interaction.reply({
-      content: `Your current check-in is: ${currentRow}\nRun /mycheckin again only if you want to update it 💛`,
+      content: `Your current check-in is: ${currentRow}\nUse the check-in button again only if you want to update it 💛`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -375,7 +375,7 @@ async function runCheckInFlow(interaction, panelMessage, config, activeFlowContr
 
   if (activeFlowControls.has(interaction.user.id)) {
     await sendEphemeralPrompt(interaction, {
-      content: 'You already have an active check-in flow. Use /cancelcheckin if needed 💛',
+      content: 'You already have an active check-in flow. Finish it first, then start again 💛',
     });
     return;
   }
