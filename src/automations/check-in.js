@@ -10,7 +10,7 @@ const {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { postRelationshipPlantUpdate } = require('./relationship-plant');
+const { postRelationshipPlantUpdate, resetPlantScore } = require('./relationship-plant');
 
 const START_CHECKIN_COMMAND = new SlashCommandBuilder().setName('startcheckin').setDescription('Post today\'s daily check-in panel');
 const MY_CHECKIN_COMMAND = new SlashCommandBuilder().setName('mycheckin').setDescription('Start your check-in for today\'s panel');
@@ -20,6 +20,9 @@ const TEST_SECOND_CHECKIN_COMMAND = new SlashCommandBuilder()
 const CANCEL_CHECKIN_COMMAND = new SlashCommandBuilder()
   .setName('cancelcheckin')
   .setDescription('Cancel your current check-in flow');
+const RESET_PLANT_SCORE_COMMAND = new SlashCommandBuilder()
+  .setName('resetplantscore')
+  .setDescription('Reset relationship plant score to default (testing)');
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const CUSTOM_CHOICE_VALUE = '__custom__';
@@ -81,8 +84,8 @@ function setupCheckIn(client) {
     timezone: process.env.TIMEZONE || 'Europe/Rome',
     hour: toSafeNumber(process.env.DAILY_CHECKIN_HOUR, 21),
     minute: toSafeNumber(process.env.DAILY_CHECKIN_MINUTE, 0),
-    relationshipChannelId: process.env.RELATIONSHIP_CHANNEL_ID || '1503086899894423552',
-    relationshipChannelName: process.env.RELATIONSHIP_CHANNEL_NAME || 'our-relationship',
+    relationshipChannelId: process.env.RELATIONSHIP_CHANNEL_ID || '1503325092946382868',
+    relationshipChannelName: process.env.RELATIONSHIP_CHANNEL_NAME || 'our-plant',
     plantThreadName: process.env.RELATIONSHIP_PLANT_THREAD_NAME || 'Caring for our plant🪴💛',
   };
 
@@ -136,6 +139,10 @@ function setupCheckIn(client) {
           await handleCancelCheckInCommand(interaction, activeFlowControls);
           return;
         }
+        if (interaction.commandName === 'resetplantscore') {
+          await handleResetPlantScoreCommand(interaction);
+          return;
+        }
 
       }
 
@@ -168,6 +175,7 @@ async function registerCheckInCommands(config) {
       MY_CHECKIN_COMMAND.toJSON(),
       TEST_SECOND_CHECKIN_COMMAND.toJSON(),
       CANCEL_CHECKIN_COMMAND.toJSON(),
+      RESET_PLANT_SCORE_COMMAND.toJSON(),
     ];
     const incomingNames = new Set(incoming.map((command) => command.name));
     const legacyNames = new Set(['checkin', 'checkinstatus']);
@@ -177,7 +185,7 @@ async function registerCheckInCommands(config) {
     ];
 
     await rest.put(route, { body: merged });
-    console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin, /cancelcheckin');
+    console.log('[check-in] Slash commands registered: /startcheckin, /mycheckin, /testsecondcheckin, /cancelcheckin, /resetplantscore');
   } catch (error) {
     console.error('[check-in] Failed to register slash commands:', error);
   }
@@ -550,6 +558,14 @@ async function handleCancelCheckInCommand(interaction, activeFlowControls) {
   });
 }
 
+async function handleResetPlantScoreCommand(interaction) {
+  const score = resetPlantScore();
+  await interaction.reply({
+    content: `Relationship plant score reset to default (**${score}**) 💛`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 async function updatePanelMessage(message, config, partnerKey, mood, support, plantState) {
   const state = parsePanelState(message.content, config);
   const wasBothDone = !isPendingRow(state.partner1Row) && !isPendingRow(state.partner2Row);
@@ -794,8 +810,6 @@ function composePanelContent(config, date, partner1Row, partner2Row, supportIdea
     '',
     `${config.partner1Name}: ${partner1Row}`,
     `${config.partner2Name}: ${partner2Row}`,
-    '',
-    'Use the button below to check in 💛',
     supportIdeaLine ? `\n${supportIdeaLine}` : '',
     careNoteLine ? `\n${careNoteLine}` : '',
   ]

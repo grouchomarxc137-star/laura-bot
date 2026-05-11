@@ -47,7 +47,6 @@ async function postRelationshipPlantUpdate(input) {
     guildId,
     relationshipChannelId,
     relationshipChannelName,
-    threadName,
     timezone,
     date,
     partner1Name,
@@ -60,11 +59,6 @@ async function postRelationshipPlantUpdate(input) {
     const channel = await getRelationshipChannel(client, guildId, relationshipChannelId, relationshipChannelName);
     if (!channel) {
       console.warn('[relationship-plant] Relationship channel not found. Skipping plant update.');
-      return;
-    }
-
-    const thread = await getOrCreatePlantThread(channel, threadName || 'our-garden');
-    if (!thread) {
       return;
     }
 
@@ -84,7 +78,6 @@ async function postRelationshipPlantUpdate(input) {
       averageInput: average.input,
       averageLevel: average.level,
       relationshipState,
-      previousScore,
       nextScore,
       impact,
       timezone,
@@ -100,7 +93,7 @@ async function postRelationshipPlantUpdate(input) {
       payload.files = [imageFile];
     }
 
-    await thread.send(payload);
+    await channel.send(payload);
   } catch (error) {
     console.error('[relationship-plant] Failed to post plant update:', error);
   }
@@ -161,7 +154,6 @@ function buildPlantResponseMessage(input) {
     partner2State,
     averageInput,
     relationshipState,
-    previousScore,
     nextScore,
     impact,
   } = input;
@@ -172,10 +164,9 @@ function buildPlantResponseMessage(input) {
     `🌼 ${partner1Name}: **${partner1State}**`,
     `🌼 ${partner2Name}: **${partner2State}**`,
     `🪴 Average daily plant feeling: **${averageInput}**`,
-    `⭐ Relationship score: **${previousScore} → ${nextScore}** (${formatSigned(impact)})`,
     `🌿 Relationship state: **${relationshipState}**`,
     '',
-    `🐦 Bird vibe: ${BIRD_MOOD[relationshipState]}`,
+    `💛🐥 Bird vibe: ${BIRD_MOOD[relationshipState]}`,
     '',
     warmStateMessage(relationshipState, impact),
   ];
@@ -277,34 +268,6 @@ async function fetchTextChannel(client, channelId) {
   }
 }
 
-async function getOrCreatePlantThread(channel, threadName) {
-  try {
-    const active = await channel.threads.fetchActive();
-    let existing = active.threads.find((thread) => thread.name === threadName);
-    if (existing) {
-      return existing;
-    }
-
-    const archived = await channel.threads.fetchArchived({ type: 'public', fetchAll: true });
-    existing = archived.threads.find((thread) => thread.name === threadName);
-    if (existing) {
-      if (existing.archived) {
-        await existing.setArchived(false, 'Reopen relationship plant thread');
-      }
-      return existing;
-    }
-
-    return await channel.threads.create({
-      name: threadName,
-      autoArchiveDuration: 10080,
-      reason: 'Track relationship plant check-ins',
-    });
-  } catch (error) {
-    console.error('[relationship-plant] Failed to get or create plant thread:', error);
-    return null;
-  }
-}
-
 function imagePathForState(state) {
   const filename = IMAGE_BY_STATE[state];
   if (!filename) {
@@ -359,6 +322,11 @@ function writeScore(score) {
   }
 }
 
+function resetPlantScore() {
+  writeScore(STARTING_SCORE);
+  return STARTING_SCORE;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -376,4 +344,5 @@ module.exports = {
   scoreImpactFromInput,
   buildPlantResponseMessage,
   relationshipStateFromScore,
+  resetPlantScore,
 };
