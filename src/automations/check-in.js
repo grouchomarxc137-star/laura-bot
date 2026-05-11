@@ -584,9 +584,11 @@ async function updatePanelMessage(message, config, partnerKey, mood, support, pl
 
   await message.edit({ content: newContent, components });
 
-  if (!wasBothDone && isBothDone) {
+  if (isBothDone) {
     await maybePostRelationshipPlantUpdate(message, config, state);
+  }
 
+  if (!wasBothDone && isBothDone) {
     await message.channel.send({
       content: newContent,
       components,
