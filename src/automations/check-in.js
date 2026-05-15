@@ -16,6 +16,9 @@ const START_CHECKIN_COMMAND = new SlashCommandBuilder().setName('startcheckin').
 const TEST_SECOND_CHECKIN_COMMAND = new SlashCommandBuilder()
   .setName('testsecondcheckin')
   .setDescription('Test check-in as partner 2');
+const CANCEL_CHECKIN_COMMAND = new SlashCommandBuilder()
+  .setName('cancelcheckin')
+  .setDescription('Cancel all active daily check-in sessions');
 const RESET_PLANT_SCORE_COMMAND = new SlashCommandBuilder()
   .setName('resetplantscore')
   .setDescription('Reset relationship plant score to default (testing)');
@@ -126,6 +129,11 @@ function setupCheckIn(client) {
           return;
         }
 
+        if (interaction.commandName === 'cancelcheckin') {
+          await handleCancelAllCheckInCommand(interaction, activeFlowControls);
+          return;
+        }
+
         if (interaction.commandName === 'resetplantscore') {
           await handleResetPlantScoreCommand(interaction);
           return;
@@ -160,6 +168,7 @@ async function registerCheckInCommands(config) {
     const incoming = [
       START_CHECKIN_COMMAND.toJSON(),
       TEST_SECOND_CHECKIN_COMMAND.toJSON(),
+      CANCEL_CHECKIN_COMMAND.toJSON(),
       RESET_PLANT_SCORE_COMMAND.toJSON(),
     ];
     const incomingNames = new Set(incoming.map((command) => command.name));
@@ -167,7 +176,6 @@ async function registerCheckInCommands(config) {
       'checkin',
       'checkinstatus',
       'mycheckin',
-      'cancelcheckin',
       'addboundary',
       'boundarylist',
       'updateboundary',
@@ -185,7 +193,7 @@ async function registerCheckInCommands(config) {
     ];
 
     await rest.put(route, { body: merged });
-    console.log('[check-in] Slash commands registered: /startcheckin, /testsecondcheckin, /resetplantscore');
+    console.log('[check-in] Slash commands registered: /startcheckin, /testsecondcheckin, /cancelcheckin, /resetplantscore');
   } catch (error) {
     console.error('[check-in] Failed to register slash commands:', error);
   }
@@ -422,7 +430,7 @@ async function askSelect(interaction, options, activeFlowControls) {
     return null;
   }
 
-  const value = await resolveSelectValue(interaction, selection, 'answer');
+  const value = await resolveSelectValue(interaction, selection, 'answer', activeFlowControls);
   if (!value) {
     return null;
   }
@@ -463,7 +471,7 @@ async function askMoodSupportAndPlant(interaction, partnerKey, activeFlowControl
     return null;
   }
 
-  const mood = await resolveSelectValue(interaction, moodSelection, 'mood');
+  const mood = await resolveSelectValue(interaction, moodSelection, 'mood', activeFlowControls);
   if (!mood) {
     return null;
   }
@@ -478,7 +486,7 @@ async function askMoodSupportAndPlant(interaction, partnerKey, activeFlowControl
     return null;
   }
 
-  const support = await resolveSelectValue(interaction, supportSelection, 'support preference');
+  const support = await resolveSelectValue(interaction, supportSelection, 'support preference', activeFlowControls);
   if (!support) {
     return null;
   }
@@ -493,7 +501,7 @@ async function askMoodSupportAndPlant(interaction, partnerKey, activeFlowControl
     return null;
   }
 
-  const plantState = await resolveSelectValue(interaction, plantSelection, 'plant state');
+  const plantState = await resolveSelectValue(interaction, plantSelection, 'plant state', activeFlowControls);
   if (!plantState) {
     return null;
   }
@@ -505,7 +513,7 @@ async function askMoodSupportAndPlant(interaction, partnerKey, activeFlowControl
   return { mood, support, plantState };
 }
 
-async function resolveSelectValue(interaction, selection, label) {
+async function resolveSelectValue(interaction, selection, label, activeFlowControls) {
   const value = selection.values[0];
   if (value !== CUSTOM_CHOICE_VALUE) {
     await selection.deferUpdate();
@@ -517,7 +525,7 @@ async function resolveSelectValue(interaction, selection, label) {
     flags: MessageFlags.Ephemeral,
   });
 
-  const customMessage = await waitForNextUserMessage(interaction.channel, interaction.user.id);
+  const customMessage = await waitForNextUserMessage(interaction.channel, interaction.user.id, activeFlowControls);
   if (!customMessage) {
     return null;
   }
@@ -534,6 +542,31 @@ async function resolveSelectValue(interaction, selection, label) {
   }
 
   return customValue;
+}
+
+async function handleCancelAllCheckInCommand(interaction, activeFlowControls) {
+  const controls = [...activeFlowControls.values()];
+  for (const control of controls) {
+    control.cancelled = true;
+    if (typeof control.cancelWait === 'function') {
+      control.cancelWait();
+    }
+  }
+
+  activeFlowControls.clear();
+
+  if (controls.length === 0) {
+    await interaction.reply({
+      content: 'No active check-in sessions to cancel right now 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    content: `Cancelled ${controls.length} active check-in session${controls.length === 1 ? '' : 's'} 💛`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleCancelCheckInCommand(interaction, activeFlowControls) {
@@ -1103,16 +1136,43 @@ function waitForSelectInteractionAny(client, userId, customIds, activeFlowContro
   });
 }
 
-async function waitForNextUserMessage(channel, userId) {
-  try {
-    const collected = await channel.awaitMessages({
+async function waitForNextUserMessage(channel, userId, activeFlowControls) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const collector = channel.createMessageCollector({
       filter: (message) => message.author.id === userId && !message.author.bot,
       max: 1,
     });
-    return collected.first() || null;
-  } catch {
-    return null;
-  }
+
+    const finish = (message) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      collector.stop('done');
+      const control = activeFlowControls?.get(userId);
+      if (control) {
+        control.cancelWait = null;
+      }
+      resolve(message || null);
+    };
+
+    const control = activeFlowControls?.get(userId);
+    if (control) {
+      control.cancelWait = () => finish(null);
+      if (control.cancelled) {
+        finish(null);
+        return;
+      }
+    }
+
+    collector.on('collect', (message) => finish(message));
+    collector.on('end', (collected) => {
+      if (!settled) {
+        finish(collected.first() || null);
+      }
+    });
+  });
 }
 
 module.exports = {
