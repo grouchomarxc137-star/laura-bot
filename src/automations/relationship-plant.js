@@ -22,6 +22,12 @@ const SCORE_IMPACT_BY_DAILY_INPUT = {
   Thriving: 5,
 };
 
+const SCORE_IMPACT_WHILE_THRIVING = {
+  Stable: -2,
+  'Watered & Sunned': -1,
+  Thriving: 2,
+};
+
 const BIRD_MOOD = {
   Critical: 'exhausted, tucked-in birds staying close for safety',
   Struggling: 'quiet birds with low energy, still trying to stay nearby',
@@ -64,7 +70,8 @@ async function postRelationshipPlantUpdate(input) {
 
     const average = calculateAverageInput(partner1State, partner2State);
     const previousScore = readScore();
-    const impact = scoreImpactFromInput(average.input);
+    const currentRelationshipState = relationshipStateFromScore(previousScore);
+    const impact = scoreImpactFromInput(average.input, currentRelationshipState);
     const nextScore = clamp(previousScore + impact, SCORE_MIN, SCORE_MAX);
     writeScore(nextScore);
     const relationshipState = relationshipStateFromScore(nextScore);
@@ -125,7 +132,10 @@ function inputFromLevel(level) {
   return 'Thriving';
 }
 
-function scoreImpactFromInput(input) {
+function scoreImpactFromInput(input, currentRelationshipState = null) {
+  if (currentRelationshipState === 'Thriving' && SCORE_IMPACT_WHILE_THRIVING[input] !== undefined) {
+    return SCORE_IMPACT_WHILE_THRIVING[input];
+  }
   return SCORE_IMPACT_BY_DAILY_INPUT[input] ?? 0;
 }
 
@@ -140,6 +150,9 @@ function relationshipStateFromScore(score) {
     return 'Unstable';
   }
   if (score <= 79) {
+    return 'Healthy';
+  }
+  if (score <= 89) {
     return 'Healthy';
   }
   return 'Thriving';
