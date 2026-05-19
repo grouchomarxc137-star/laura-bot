@@ -10,7 +10,12 @@ const {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { postRelationshipPlantUpdate, resetPlantScore } = require('./relationship-plant');
+const {
+  postRelationshipPlantUpdate,
+  resetPlantScore,
+  getPlantScore,
+  relationshipStateFromScore,
+} = require('./relationship-plant');
 
 const START_CHECKIN_COMMAND = new SlashCommandBuilder().setName('startcheckin').setDescription('Post today\'s daily check-in panel');
 const TEST_SECOND_CHECKIN_COMMAND = new SlashCommandBuilder()
@@ -22,6 +27,9 @@ const CANCEL_CHECKIN_COMMAND = new SlashCommandBuilder()
 const RESET_PLANT_SCORE_COMMAND = new SlashCommandBuilder()
   .setName('resetplantscore')
   .setDescription('Reset relationship plant score to default (testing)');
+const PLANT_SCORE_COMMAND = new SlashCommandBuilder()
+  .setName('plantscore')
+  .setDescription('Show the hidden plant score');
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const CUSTOM_CHOICE_VALUE = '__custom__';
@@ -138,6 +146,10 @@ function setupCheckIn(client) {
           await handleResetPlantScoreCommand(interaction);
           return;
         }
+        if (interaction.commandName === 'plantscore') {
+          await handlePlantScoreCommand(interaction);
+          return;
+        }
 
       }
 
@@ -170,6 +182,7 @@ async function registerCheckInCommands(config) {
       TEST_SECOND_CHECKIN_COMMAND.toJSON(),
       CANCEL_CHECKIN_COMMAND.toJSON(),
       RESET_PLANT_SCORE_COMMAND.toJSON(),
+      PLANT_SCORE_COMMAND.toJSON(),
     ];
     const incomingNames = new Set(incoming.map((command) => command.name));
     const legacyNames = new Set([
@@ -193,7 +206,7 @@ async function registerCheckInCommands(config) {
     ];
 
     await rest.put(route, { body: merged });
-    console.log('[check-in] Slash commands registered: /startcheckin, /testsecondcheckin, /cancelcheckin, /resetplantscore');
+    console.log('[check-in] Slash commands registered: /startcheckin, /testsecondcheckin, /cancelcheckin, /resetplantscore, /plantscore');
   } catch (error) {
     console.error('[check-in] Failed to register slash commands:', error);
   }
@@ -595,6 +608,15 @@ async function handleResetPlantScoreCommand(interaction) {
   const score = resetPlantScore();
   await interaction.reply({
     content: `Relationship plant score reset to default (**${score}**) 💛`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handlePlantScoreCommand(interaction) {
+  const score = getPlantScore();
+  const state = relationshipStateFromScore(score);
+  await interaction.reply({
+    content: `Hidden plant score: **${score}**\nRelationship state: **${state}**`,
     flags: MessageFlags.Ephemeral,
   });
 }

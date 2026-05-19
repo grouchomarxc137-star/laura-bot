@@ -302,6 +302,10 @@ function readScore() {
   }
 }
 
+function getPlantScore() {
+  return readScore();
+}
+
 function writeScore(score) {
   try {
     fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
@@ -345,4 +349,5 @@ module.exports = {
   buildPlantResponseMessage,
   relationshipStateFromScore,
   resetPlantScore,
+  getPlantScore,
 };
