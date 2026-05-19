@@ -331,6 +331,12 @@ function resetPlantScore() {
   return STARTING_SCORE;
 }
 
+function setPlantScore(value) {
+  const next = clamp(Number(value), SCORE_MIN, SCORE_MAX);
+  writeScore(next);
+  return next;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -350,4 +356,5 @@ module.exports = {
   relationshipStateFromScore,
   resetPlantScore,
   getPlantScore,
+  setPlantScore,
 };
