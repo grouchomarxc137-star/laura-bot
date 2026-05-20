@@ -11,7 +11,6 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
-  StringSelectMenuBuilder,
 } = require('discord.js');
 
 const MOOD_COMMAND = new SlashCommandBuilder()
@@ -38,8 +37,8 @@ const STORE_PATH = path.resolve(__dirname, '../data/mood-tracker.json');
 const ARCHIVE_THREAD_NAME = 'Mood Tracker Archive';
 const TRACKER_MESSAGE_TITLE = 'Mood Tracker';
 const BUTTON_PREFIX = 'mood_tracker_set_';
-const DAY_SELECT_ID_A = 'mood_tracker_day_select_a';
-const DAY_SELECT_ID_B = 'mood_tracker_day_select_b';
+const DAY_BUTTON_PREFIX = 'mood_tracker_day_';
+const PAGE_BUTTON_PREFIX = 'mood_tracker_page_';
 const RESET_BUTTON_ID = 'mood_tracker_reset';
 
 const MOOD_WORD_TO_SCORE = {
@@ -118,11 +117,12 @@ function setupMoodTracker(client) {
         await handleMoodResetCommand(interaction, config);
         return;
       }
-      if (
-        interaction.isStringSelectMenu() &&
-        (interaction.customId === DAY_SELECT_ID_A || interaction.customId === DAY_SELECT_ID_B)
-      ) {
-        await handleDaySelect(interaction, config, selectedDayByUser);
+      if (interaction.isButton() && interaction.customId.startsWith(DAY_BUTTON_PREFIX)) {
+        await handleDayButton(interaction, config, selectedDayByUser);
+        return;
+      }
+      if (interaction.isButton() && interaction.customId.startsWith(PAGE_BUTTON_PREFIX)) {
+        await handlePageButton(interaction, config);
         return;
       }
       if (interaction.isButton() && interaction.customId.startsWith(BUTTON_PREFIX)) {
@@ -311,7 +311,7 @@ async function handleMoodButton(interaction, config, selectedDayByUser) {
   });
 }
 
-async function handleDaySelect(interaction, config, selectedDayByUser) {
+async function handleDayButton(interaction, config, selectedDayByUser) {
   if (interaction.channelId !== config.moodChannelId) {
     await interaction.reply({
       content: 'Use this in the mood tracker channel only 💛',
@@ -320,7 +320,7 @@ async function handleDaySelect(interaction, config, selectedDayByUser) {
     return;
   }
 
-  const day = Number(interaction.values?.[0]);
+  const day = Number(interaction.customId.replace(DAY_BUTTON_PREFIX, ''));
   if (!Number.isInteger(day) || day < 1 || day > 31) {
     await interaction.reply({
       content: 'Invalid day selected.',
@@ -331,9 +331,43 @@ async function handleDaySelect(interaction, config, selectedDayByUser) {
 
   selectedDayByUser.set(interaction.user.id, day);
   await interaction.reply({
-    content: `Day **${String(day).padStart(2, '0')}** selected. Now click a mood button.`,
+    content: `Day **${String(day).padStart(2, '0')}** selected. Now click a mood color.`,
     flags: MessageFlags.Ephemeral,
   });
+}
+
+async function handlePageButton(interaction, config) {
+  if (interaction.channelId !== config.moodChannelId) {
+    await interaction.reply({
+      content: 'Use this in the mood tracker channel only 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const page = Number(interaction.customId.replace(PAGE_BUTTON_PREFIX, ''));
+  if (!Number.isInteger(page) || page < 0 || page > 2) {
+    await interaction.reply({
+      content: 'Invalid page.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getTextChannel(interaction.client, config.moodChannelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Mood channel not found. Check `MOOD_TRACKER_CHANNEL_ID`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const store = readStore();
+  store.dayPage = page;
+  writeStore(store);
+  await upsertTrackerMessage(channel, store, config.timezone);
+  await interaction.deferUpdate();
 }
 
 async function handleMoodResetButton(interaction, config) {
@@ -362,6 +396,7 @@ async function handleMoodResetButton(interaction, config) {
     monthKey,
     entries: {},
     chartMessageId: existing.chartMessageId || null,
+    dayPage: 0,
     updatedAt: new Date().toISOString(),
   };
 
@@ -450,7 +485,7 @@ function buildMonthChartEmbed(monthKey, entries, timezone) {
   for (let i = 0; i < cells.length; i += 7) {
     const week = cells.slice(i, i + 7);
     const row = week
-      .map((cell) => (cell ? `${cell.tile}${String(cell.day).padStart(2, '0')}` : '⬜  '))
+      .map((cell) => (cell ? `${cell.tile} ${String(cell.day).padStart(2, '0')}` : '⬜   '))
       .join(' ');
     lines.push(`\`${row}\``);
   }
@@ -461,51 +496,66 @@ function buildMonthChartEmbed(monthKey, entries, timezone) {
     .setFooter({ text: `Timezone: ${timezone}` });
 }
 
-function buildMoodComponents(monthKey) {
+function buildMoodComponents(monthKey, dayPage = 0) {
   const [yearText, monthText] = monthKey.split('-');
   const year = Number(yearText);
   const month = Number(monthText);
   const daysInMonth = new Date(year, month, 0).getDate();
-  const dayOptions = [];
+  const dayNumbers = [];
   for (let day = 1; day <= daysInMonth; day += 1) {
-    dayOptions.push({
-      label: `${String(day).padStart(2, '0')}`,
-      value: `${day}`,
-    });
+    dayNumbers.push(day);
   }
 
-  const components = [
-    new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(DAY_SELECT_ID_A)
-        .setPlaceholder('Select day (1-16)')
-        .addOptions(dayOptions.slice(0, 16)),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('Awful').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('Bad').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('Okay').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}4`).setLabel('Good').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}5`).setLabel('Excellent').setStyle(ButtonStyle.Success),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(RESET_BUTTON_ID).setLabel('Reset Month').setStyle(ButtonStyle.Secondary),
-    ),
-  ];
-
-  const secondChunk = dayOptions.slice(16);
-  if (secondChunk.length > 0) {
-    components.splice(
-      1,
-      0,
+  const chunks = chunk(dayNumbers, 15);
+  const safePage = Math.max(0, Math.min(dayPage, chunks.length - 1));
+  const pageDays = chunks[safePage] || [];
+  const dayRows = [];
+  const dayRowChunks = chunk(pageDays, 5);
+  for (const rowDays of dayRowChunks) {
+    dayRows.push(
       new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(DAY_SELECT_ID_B)
-          .setPlaceholder('Select day (17-31)')
-          .addOptions(secondChunk),
+        rowDays.map((day) =>
+          new ButtonBuilder()
+            .setCustomId(`${DAY_BUTTON_PREFIX}${day}`)
+            .setLabel(String(day).padStart(2, '0'))
+            .setStyle(ButtonStyle.Secondary),
+        ),
       ),
     );
   }
+
+  const navButtons = [];
+  if (chunks.length > 1) {
+    if (safePage > 0) {
+      navButtons.push(
+        new ButtonBuilder()
+          .setCustomId(`${PAGE_BUTTON_PREFIX}${safePage - 1}`)
+          .setLabel('Prev Days')
+          .setStyle(ButtonStyle.Secondary),
+      );
+    }
+    if (safePage < chunks.length - 1) {
+      navButtons.push(
+        new ButtonBuilder()
+          .setCustomId(`${PAGE_BUTTON_PREFIX}${safePage + 1}`)
+          .setLabel('Next Days')
+          .setStyle(ButtonStyle.Secondary),
+      );
+    }
+  }
+  navButtons.push(new ButtonBuilder().setCustomId(RESET_BUTTON_ID).setLabel('Reset Month').setStyle(ButtonStyle.Secondary));
+
+  const components = [
+    ...dayRows,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('🟥 Awful').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('🟧 Bad').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('🟨 Okay').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}4`).setLabel('🟩 Good').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}5`).setLabel('🟦 Excellent').setStyle(ButtonStyle.Primary),
+    ),
+    new ActionRowBuilder().addComponents(...navButtons),
+  ];
   return components;
 }
 
@@ -573,10 +623,11 @@ function readStore() {
       monthKey: parsed.monthKey || null,
       entries: parsed.entries && typeof parsed.entries === 'object' ? parsed.entries : {},
       chartMessageId: parsed.chartMessageId || null,
+      dayPage: Number.isInteger(parsed.dayPage) ? parsed.dayPage : 0,
       updatedAt: parsed.updatedAt || null,
     };
   } catch {
-    return { monthKey: null, entries: {}, chartMessageId: null };
+    return { monthKey: null, entries: {}, chartMessageId: null, dayPage: 0 };
   }
 }
 
@@ -601,9 +652,9 @@ async function ensureTrackerMessage(channel, store, timezone) {
 
   const embed = buildMonthChartEmbed(store.monthKey, store.entries, timezone);
   const sent = await channel.send({
-    content: 'Select a day, then click a mood button.',
+    content: 'Click a day button, then click a mood color.',
     embeds: [embed],
-    components: buildMoodComponents(store.monthKey),
+    components: buildMoodComponents(store.monthKey, store.dayPage || 0),
     allowedMentions: { parse: [] },
   });
   store.chartMessageId = sent.id;
@@ -618,9 +669,9 @@ async function upsertTrackerMessage(channel, store, timezone) {
   try {
     const message = await channel.messages.fetch(store.chartMessageId);
     await message.edit({
-      content: 'Select a day, then click a mood button.',
+      content: 'Click a day button, then click a mood color.',
       embeds: [embed],
-      components: buildMoodComponents(store.monthKey),
+      components: buildMoodComponents(store.monthKey, store.dayPage || 0),
       allowedMentions: { parse: [] },
     });
   } catch {
@@ -636,6 +687,14 @@ function toValidDay(day, year, month) {
     return null;
   }
   return candidate;
+}
+
+function chunk(list, size) {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) {
+    out.push(list.slice(i, i + size));
+  }
+  return out;
 }
 
 async function safeReply(interaction, payload) {
