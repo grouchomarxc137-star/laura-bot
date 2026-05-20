@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { setupMemoryVault } = require('./automations/memory-vault');
 const { setupCheckIn } = require('./automations/check-in');
+const { setupMoodTracker } = require('./automations/mood-tracker');
 
 const REQUIRED_ENV = ['DISCORD_TOKEN'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -29,6 +30,7 @@ if (process.env.ENABLE_MESSAGE_CONTENT_INTENT !== 'true') {
 
 setupMemoryVault(client);
 setupCheckIn(client);
+setupMoodTracker(client);
 
 client.once('ready', () => {
   console.log(`[startup] Logged in as ${client.user.tag}`);
