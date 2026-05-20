@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   EmbedBuilder,
   Events,
@@ -32,6 +35,8 @@ const MOOD_RESET_COMMAND = new SlashCommandBuilder()
 
 const STORE_PATH = path.resolve(__dirname, '../data/mood-tracker.json');
 const ARCHIVE_THREAD_NAME = 'Mood Tracker Archive';
+const TRACKER_MESSAGE_TITLE = 'Mood Tracker';
+const BUTTON_PREFIX = 'mood_tracker_set_';
 
 const MOOD_WORD_TO_SCORE = {
   awful: 1,
@@ -94,17 +99,21 @@ function setupMoodTracker(client) {
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
-    if (!isConfigured || !interaction.isChatInputCommand()) {
+    if (!isConfigured) {
       return;
     }
 
     try {
-      if (interaction.commandName === 'mood') {
+      if (interaction.isChatInputCommand() && interaction.commandName === 'mood') {
         await handleMoodCommand(interaction, config);
         return;
       }
-      if (interaction.commandName === 'moodreset') {
+      if (interaction.isChatInputCommand() && interaction.commandName === 'moodreset') {
         await handleMoodResetCommand(interaction, config);
+        return;
+      }
+      if (interaction.isButton() && interaction.customId.startsWith(BUTTON_PREFIX)) {
+        await handleMoodButton(interaction, config);
       }
     } catch (error) {
       console.error('[mood-tracker] Failed to handle mood command:', error);
@@ -182,23 +191,7 @@ async function handleMoodCommand(interaction, config) {
     store.monthKey = monthKey;
   }
 
-  store.entries[String(day.day)] = score;
-  store.updatedAt = new Date().toISOString();
-
-  const chartEmbed = buildMonthChartEmbed(store.monthKey, store.entries, config.timezone);
-
-  if (store.chartMessageId) {
-    try {
-      const existing = await channel.messages.fetch(store.chartMessageId);
-      await existing.edit({ embeds: [chartEmbed], allowedMentions: { parse: [] } });
-    } catch {
-      const sent = await channel.send({ embeds: [chartEmbed], allowedMentions: { parse: [] } });
-      store.chartMessageId = sent.id;
-    }
-  } else {
-    const sent = await channel.send({ embeds: [chartEmbed], allowedMentions: { parse: [] } });
-    store.chartMessageId = sent.id;
-  }
+  await applyMoodScore(channel, store, score, day, config.timezone);
 
   writeStore(store);
 
@@ -229,22 +222,81 @@ async function handleMoodResetCommand(interaction, config) {
   const now = new Date();
   const day = getLocalDateParts(now, config.timezone);
   const monthKey = `${day.year}-${String(day.month).padStart(2, '0')}`;
+  const existing = readStore();
   const store = {
     monthKey,
     entries: {},
-    chartMessageId: null,
+    chartMessageId: existing.chartMessageId || null,
     updatedAt: new Date().toISOString(),
   };
-
-  const chartEmbed = buildMonthChartEmbed(monthKey, store.entries, config.timezone);
-  const sent = await channel.send({ embeds: [chartEmbed], allowedMentions: { parse: [] } });
-  store.chartMessageId = sent.id;
+  await ensureTrackerMessage(channel, store, config.timezone);
+  await upsertTrackerMessage(channel, store, config.timezone);
   writeStore(store);
 
   await interaction.reply({
     content: `Mood chart reset for **${monthTitleFromKey(monthKey)}**.`,
     flags: MessageFlags.Ephemeral,
   });
+}
+
+async function handleMoodButton(interaction, config) {
+  if (interaction.channelId !== config.moodChannelId) {
+    await interaction.reply({
+      content: 'Use these mood buttons in the mood tracker channel only 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const scoreText = interaction.customId.replace(BUTTON_PREFIX, '');
+  const score = Number(scoreText);
+  if (![1, 2, 3, 4, 5].includes(score)) {
+    await interaction.reply({
+      content: 'Invalid mood button.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getTextChannel(interaction.client, config.moodChannelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Mood channel not found. Check `MOOD_TRACKER_CHANNEL_ID`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const now = new Date();
+  const day = getLocalDateParts(now, config.timezone);
+  const monthKey = `${day.year}-${String(day.month).padStart(2, '0')}`;
+  const store = readStore();
+
+  if (store.monthKey && store.monthKey !== monthKey) {
+    await archiveCurrentMonth(channel, store, config.timezone);
+    store.monthKey = monthKey;
+    store.entries = {};
+    store.chartMessageId = null;
+  }
+
+  if (!store.monthKey) {
+    store.monthKey = monthKey;
+  }
+
+  await applyMoodScore(channel, store, score, day, config.timezone);
+  writeStore(store);
+
+  await interaction.reply({
+    content: `Saved for ${formatLocalDate(now, config.timezone)}: **${SCORE_TO_LABEL[score]}** (${score}/5).`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function applyMoodScore(channel, store, score, day, timezone) {
+  store.entries[String(day.day)] = score;
+  store.updatedAt = new Date().toISOString();
+  await ensureTrackerMessage(channel, store, timezone);
+  await upsertTrackerMessage(channel, store, timezone);
 }
 
 async function archiveCurrentMonth(channel, store, timezone) {
@@ -323,7 +375,7 @@ function buildMonthChartEmbed(monthKey, entries, timezone) {
   }
 
   return new EmbedBuilder()
-    .setTitle(`Mood Tracker — ${monthTitleFromKey(monthKey)}`)
+    .setTitle(`${TRACKER_MESSAGE_TITLE} — ${monthTitleFromKey(monthKey)}`)
     .setDescription([
       '`Mo Tu We Th Fr Sa Su`',
       ...lines,
@@ -331,6 +383,18 @@ function buildMonthChartEmbed(monthKey, entries, timezone) {
       'Legend: 🟥 1 Awful | 🟧 2 Bad | 🟨 3 Okay | 🟩 4 Good | 🟦 5 Excellent (cyan) | ⬛ no entry',
     ].join('\n'))
     .setFooter({ text: `Timezone: ${timezone}` });
+}
+
+function buildMoodButtons() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('Awful').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('Bad').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('Okay').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}4`).setLabel('Good').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}5`).setLabel('Excellent').setStyle(ButtonStyle.Success),
+    ),
+  ];
 }
 
 function monthTitleFromKey(monthKey) {
@@ -410,6 +474,46 @@ function writeStore(store) {
     fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf8');
   } catch (error) {
     console.error('[mood-tracker] Failed to write store:', error);
+  }
+}
+
+async function ensureTrackerMessage(channel, store, timezone) {
+  if (store.chartMessageId) {
+    try {
+      await channel.messages.fetch(store.chartMessageId);
+      return;
+    } catch {
+      store.chartMessageId = null;
+    }
+  }
+
+  const embed = buildMonthChartEmbed(store.monthKey, store.entries, timezone);
+  const sent = await channel.send({
+    content: 'Use the buttons below to log today’s mood.',
+    embeds: [embed],
+    components: buildMoodButtons(),
+    allowedMentions: { parse: [] },
+  });
+  store.chartMessageId = sent.id;
+}
+
+async function upsertTrackerMessage(channel, store, timezone) {
+  if (!store.chartMessageId) {
+    return;
+  }
+
+  const embed = buildMonthChartEmbed(store.monthKey, store.entries, timezone);
+  try {
+    const message = await channel.messages.fetch(store.chartMessageId);
+    await message.edit({
+      content: 'Use the buttons below to log today’s mood.',
+      embeds: [embed],
+      components: buildMoodButtons(),
+      allowedMentions: { parse: [] },
+    });
+  } catch {
+    store.chartMessageId = null;
+    await ensureTrackerMessage(channel, store, timezone);
   }
 }
 
