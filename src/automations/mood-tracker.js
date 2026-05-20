@@ -66,11 +66,11 @@ const SCORE_TO_LABEL = {
 };
 
 const SCORE_TO_TILE = {
-  1: '🟥',
-  2: '🟧',
-  3: '🟨',
-  4: '🟩',
-  5: '🟦',
+  1: '🟪',
+  2: '🟥',
+  3: '🟦',
+  4: '🟡',
+  5: '🟧',
 };
 
 function setupMoodTracker(client) {
@@ -481,7 +481,7 @@ function buildMonthChartEmbed(monthKey, entries, timezone) {
     cells.push(null);
   }
 
-  const lines = ['`Mo      Tu      We      Th      Fr      Sa      Su`'];
+  const lines = [];
   for (let i = 0; i < cells.length; i += 7) {
     const week = cells.slice(i, i + 7);
     const row = week
@@ -548,11 +548,11 @@ function buildMoodComponents(monthKey, dayPage = 0) {
   const components = [
     ...dayRows,
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('🟥 Awful').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('🟧 Bad').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('🟨 Okay').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}4`).setLabel('🟩 Good').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}5`).setLabel('🟦 Excellent').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('🟪 Awful').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('🟥 Bad').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('🟦 Okay').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}4`).setLabel('🟡 Good').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}5`).setLabel('🟧 Excellent').setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder().addComponents(...navButtons),
   ];
