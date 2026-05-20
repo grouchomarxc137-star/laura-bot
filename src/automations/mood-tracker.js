@@ -26,6 +26,9 @@ const MOOD_COMMAND = new SlashCommandBuilder()
         { name: 'Excellent', value: 'excellent' },
       ),
   );
+const MOOD_RESET_COMMAND = new SlashCommandBuilder()
+  .setName('moodreset')
+  .setDescription('Reset the current monthly mood chart (testing)');
 
 const STORE_PATH = path.resolve(__dirname, '../data/mood-tracker.json');
 const ARCHIVE_THREAD_NAME = 'Mood Tracker Archive';
@@ -91,16 +94,22 @@ function setupMoodTracker(client) {
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
-    if (!isConfigured || !interaction.isChatInputCommand() || interaction.commandName !== 'mood') {
+    if (!isConfigured || !interaction.isChatInputCommand()) {
       return;
     }
 
     try {
-      await handleMoodCommand(interaction, config);
+      if (interaction.commandName === 'mood') {
+        await handleMoodCommand(interaction, config);
+        return;
+      }
+      if (interaction.commandName === 'moodreset') {
+        await handleMoodResetCommand(interaction, config);
+      }
     } catch (error) {
-      console.error('[mood-tracker] Failed to handle /mood:', error);
+      console.error('[mood-tracker] Failed to handle mood command:', error);
       await safeReply(interaction, {
-        content: 'I could not save today\'s mood. Please try again in a moment.',
+        content: 'Mood tracker command failed. Please try again in a moment.',
         flags: MessageFlags.Ephemeral,
       });
     }
@@ -118,12 +127,12 @@ async function registerMoodCommand(config) {
 
   try {
     const existing = await rest.get(route);
-    const incoming = [MOOD_COMMAND.toJSON()];
+    const incoming = [MOOD_COMMAND.toJSON(), MOOD_RESET_COMMAND.toJSON()];
     const incomingNames = new Set(incoming.map((command) => command.name));
     const merged = [...existing.filter((command) => !incomingNames.has(command.name)), ...incoming];
 
     await rest.put(route, { body: merged });
-    console.log('[mood-tracker] Slash command registered: /mood');
+    console.log('[mood-tracker] Slash commands registered: /mood, /moodreset');
   } catch (error) {
     console.error('[mood-tracker] Failed to register slash command:', error);
   }
@@ -195,6 +204,45 @@ async function handleMoodCommand(interaction, config) {
 
   await interaction.reply({
     content: `Saved for ${formatLocalDate(now, config.timezone)}: **${SCORE_TO_LABEL[score]}** (${score}/5).`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleMoodResetCommand(interaction, config) {
+  if (interaction.channelId !== config.moodChannelId) {
+    await interaction.reply({
+      content: 'Use this command in the mood tracker channel only 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getTextChannel(interaction.client, config.moodChannelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Mood channel not found. Check `MOOD_TRACKER_CHANNEL_ID`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const now = new Date();
+  const day = getLocalDateParts(now, config.timezone);
+  const monthKey = `${day.year}-${String(day.month).padStart(2, '0')}`;
+  const store = {
+    monthKey,
+    entries: {},
+    chartMessageId: null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const chartEmbed = buildMonthChartEmbed(monthKey, store.entries, config.timezone);
+  const sent = await channel.send({ embeds: [chartEmbed], allowedMentions: { parse: [] } });
+  store.chartMessageId = sent.id;
+  writeStore(store);
+
+  await interaction.reply({
+    content: `Mood chart reset for **${monthTitleFromKey(monthKey)}**.`,
     flags: MessageFlags.Ephemeral,
   });
 }
