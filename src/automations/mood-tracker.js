@@ -38,7 +38,8 @@ const STORE_PATH = path.resolve(__dirname, '../data/mood-tracker.json');
 const ARCHIVE_THREAD_NAME = 'Mood Tracker Archive';
 const TRACKER_MESSAGE_TITLE = 'Mood Tracker';
 const BUTTON_PREFIX = 'mood_tracker_set_';
-const DAY_SELECT_ID = 'mood_tracker_day_select';
+const DAY_SELECT_ID_A = 'mood_tracker_day_select_a';
+const DAY_SELECT_ID_B = 'mood_tracker_day_select_b';
 const RESET_BUTTON_ID = 'mood_tracker_reset';
 
 const MOOD_WORD_TO_SCORE = {
@@ -117,7 +118,10 @@ function setupMoodTracker(client) {
         await handleMoodResetCommand(interaction, config);
         return;
       }
-      if (interaction.isStringSelectMenu() && interaction.customId === DAY_SELECT_ID) {
+      if (
+        interaction.isStringSelectMenu() &&
+        (interaction.customId === DAY_SELECT_ID_A || interaction.customId === DAY_SELECT_ID_B)
+      ) {
         await handleDaySelect(interaction, config, selectedDayByUser);
         return;
       }
@@ -470,12 +474,12 @@ function buildMoodComponents(monthKey) {
     });
   }
 
-  return [
+  const components = [
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId(DAY_SELECT_ID)
-        .setPlaceholder('Select day to update')
-        .addOptions(dayOptions),
+        .setCustomId(DAY_SELECT_ID_A)
+        .setPlaceholder('Select day (1-16)')
+        .addOptions(dayOptions.slice(0, 16)),
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('Awful').setStyle(ButtonStyle.Danger),
@@ -488,6 +492,21 @@ function buildMoodComponents(monthKey) {
       new ButtonBuilder().setCustomId(RESET_BUTTON_ID).setLabel('Reset Month').setStyle(ButtonStyle.Secondary),
     ),
   ];
+
+  const secondChunk = dayOptions.slice(16);
+  if (secondChunk.length > 0) {
+    components.splice(
+      1,
+      0,
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(DAY_SELECT_ID_B)
+          .setPlaceholder('Select day (17-31)')
+          .addOptions(secondChunk),
+      ),
+    );
+  }
+  return components;
 }
 
 function monthTitleFromKey(monthKey) {
