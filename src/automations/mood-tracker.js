@@ -11,6 +11,7 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
 } = require('discord.js');
 
 const MOOD_COMMAND = new SlashCommandBuilder()
@@ -37,6 +38,8 @@ const STORE_PATH = path.resolve(__dirname, '../data/mood-tracker.json');
 const ARCHIVE_THREAD_NAME = 'Mood Tracker Archive';
 const TRACKER_MESSAGE_TITLE = 'Mood Tracker';
 const BUTTON_PREFIX = 'mood_tracker_set_';
+const DAY_SELECT_ID = 'mood_tracker_day_select';
+const RESET_BUTTON_ID = 'mood_tracker_reset';
 
 const MOOD_WORD_TO_SCORE = {
   awful: 1,
@@ -71,6 +74,8 @@ const SCORE_TO_TILE = {
 };
 
 function setupMoodTracker(client) {
+  const selectedDayByUser = new Map();
+
   const config = {
     clientId: process.env.CLIENT_ID,
     guildId: process.env.GUILD_ID,
@@ -112,8 +117,16 @@ function setupMoodTracker(client) {
         await handleMoodResetCommand(interaction, config);
         return;
       }
+      if (interaction.isStringSelectMenu() && interaction.customId === DAY_SELECT_ID) {
+        await handleDaySelect(interaction, config, selectedDayByUser);
+        return;
+      }
       if (interaction.isButton() && interaction.customId.startsWith(BUTTON_PREFIX)) {
-        await handleMoodButton(interaction, config);
+        await handleMoodButton(interaction, config, selectedDayByUser);
+        return;
+      }
+      if (interaction.isButton() && interaction.customId === RESET_BUTTON_ID) {
+        await handleMoodResetButton(interaction, config);
       }
     } catch (error) {
       console.error('[mood-tracker] Failed to handle mood command:', error);
@@ -239,7 +252,7 @@ async function handleMoodResetCommand(interaction, config) {
   });
 }
 
-async function handleMoodButton(interaction, config) {
+async function handleMoodButton(interaction, config, selectedDayByUser) {
   if (interaction.channelId !== config.moodChannelId) {
     await interaction.reply({
       content: 'Use these mood buttons in the mood tracker channel only 💛',
@@ -269,6 +282,7 @@ async function handleMoodButton(interaction, config) {
 
   const now = new Date();
   const day = getLocalDateParts(now, config.timezone);
+  const selectedDay = selectedDayByUser.get(interaction.user.id);
   const monthKey = `${day.year}-${String(day.month).padStart(2, '0')}`;
   const store = readStore();
 
@@ -283,11 +297,76 @@ async function handleMoodButton(interaction, config) {
     store.monthKey = monthKey;
   }
 
-  await applyMoodScore(channel, store, score, day, config.timezone);
+  const targetDay = toValidDay(selectedDay, day.year, day.month) || day.day;
+  await applyMoodScore(channel, store, score, { ...day, day: targetDay }, config.timezone);
   writeStore(store);
 
   await interaction.reply({
-    content: `Saved for ${formatLocalDate(now, config.timezone)}: **${SCORE_TO_LABEL[score]}** (${score}/5).`,
+    content: `Saved for day **${String(targetDay).padStart(2, '0')} ${monthTitleFromKey(monthKey)}**: **${SCORE_TO_LABEL[score]}** (${score}/5).`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleDaySelect(interaction, config, selectedDayByUser) {
+  if (interaction.channelId !== config.moodChannelId) {
+    await interaction.reply({
+      content: 'Use this in the mood tracker channel only 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const day = Number(interaction.values?.[0]);
+  if (!Number.isInteger(day) || day < 1 || day > 31) {
+    await interaction.reply({
+      content: 'Invalid day selected.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  selectedDayByUser.set(interaction.user.id, day);
+  await interaction.reply({
+    content: `Day **${String(day).padStart(2, '0')}** selected. Now click a mood button.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleMoodResetButton(interaction, config) {
+  if (interaction.channelId !== config.moodChannelId) {
+    await interaction.reply({
+      content: 'Use this in the mood tracker channel only 💛',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const channel = await getTextChannel(interaction.client, config.moodChannelId);
+  if (!channel) {
+    await interaction.reply({
+      content: 'Mood channel not found. Check `MOOD_TRACKER_CHANNEL_ID`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const now = new Date();
+  const day = getLocalDateParts(now, config.timezone);
+  const monthKey = `${day.year}-${String(day.month).padStart(2, '0')}`;
+  const existing = readStore();
+  const store = {
+    monthKey,
+    entries: {},
+    chartMessageId: existing.chartMessageId || null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await ensureTrackerMessage(channel, store, config.timezone);
+  await upsertTrackerMessage(channel, store, config.timezone);
+  writeStore(store);
+
+  await interaction.reply({
+    content: `Mood chart reset for **${monthTitleFromKey(monthKey)}**.`,
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -363,36 +442,50 @@ function buildMonthChartEmbed(monthKey, entries, timezone) {
     cells.push(null);
   }
 
-  const lines = [];
+  const lines = ['`Mo      Tu      We      Th      Fr      Sa      Su`'];
   for (let i = 0; i < cells.length; i += 7) {
     const week = cells.slice(i, i + 7);
-    lines.push(week.map((cell) => (cell ? cell.tile : '⬜')).join(' '));
-    lines.push(
-      week
-        .map((cell) => (cell ? String(cell.day).padStart(2, '0') : '  '))
-        .join(' '),
-    );
+    const row = week
+      .map((cell) => (cell ? `${cell.tile}${String(cell.day).padStart(2, '0')}` : '⬜  '))
+      .join(' ');
+    lines.push(`\`${row}\``);
   }
 
   return new EmbedBuilder()
     .setTitle(`${TRACKER_MESSAGE_TITLE} — ${monthTitleFromKey(monthKey)}`)
-    .setDescription([
-      '`Mo Tu We Th Fr Sa Su`',
-      ...lines,
-      '',
-      'Legend: 🟥 1 Awful | 🟧 2 Bad | 🟨 3 Okay | 🟩 4 Good | 🟦 5 Excellent (cyan) | ⬛ no entry',
-    ].join('\n'))
+    .setDescription(lines.join('\n'))
     .setFooter({ text: `Timezone: ${timezone}` });
 }
 
-function buildMoodButtons() {
+function buildMoodComponents(monthKey) {
+  const [yearText, monthText] = monthKey.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const dayOptions = [];
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    dayOptions.push({
+      label: `${String(day).padStart(2, '0')}`,
+      value: `${day}`,
+    });
+  }
+
   return [
     new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(DAY_SELECT_ID)
+        .setPlaceholder('Select day to update')
+        .addOptions(dayOptions),
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}1`).setLabel('Awful').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('Bad').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('Okay').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}2`).setLabel('Bad').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}3`).setLabel('Okay').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}4`).setLabel('Good').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`${BUTTON_PREFIX}5`).setLabel('Excellent').setStyle(ButtonStyle.Success),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(RESET_BUTTON_ID).setLabel('Reset Month').setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -489,9 +582,9 @@ async function ensureTrackerMessage(channel, store, timezone) {
 
   const embed = buildMonthChartEmbed(store.monthKey, store.entries, timezone);
   const sent = await channel.send({
-    content: 'Use the buttons below to log today’s mood.',
+    content: 'Select a day, then click a mood button.',
     embeds: [embed],
-    components: buildMoodButtons(),
+    components: buildMoodComponents(store.monthKey),
     allowedMentions: { parse: [] },
   });
   store.chartMessageId = sent.id;
@@ -506,15 +599,24 @@ async function upsertTrackerMessage(channel, store, timezone) {
   try {
     const message = await channel.messages.fetch(store.chartMessageId);
     await message.edit({
-      content: 'Use the buttons below to log today’s mood.',
+      content: 'Select a day, then click a mood button.',
       embeds: [embed],
-      components: buildMoodButtons(),
+      components: buildMoodComponents(store.monthKey),
       allowedMentions: { parse: [] },
     });
   } catch {
     store.chartMessageId = null;
     await ensureTrackerMessage(channel, store, timezone);
   }
+}
+
+function toValidDay(day, year, month) {
+  const candidate = Number(day);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  if (!Number.isInteger(candidate) || candidate < 1 || candidate > daysInMonth) {
+    return null;
+  }
+  return candidate;
 }
 
 async function safeReply(interaction, payload) {
