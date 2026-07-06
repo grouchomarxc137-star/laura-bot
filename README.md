@@ -26,10 +26,7 @@ Required:
 Optional:
 
 - `TIMEZONE` (default: `Europe/Rome`)
-- `DAILY_MEMORY_REMINDER_HOUR` (default: `22`)
-- `DAILY_MEMORY_REMINDER_MINUTE` (default: `0`)
 - `ENABLE_MESSAGE_CONTENT_INTENT` (`true` to enable full text memory capture)
-- `MEMORY_VAULT_TAG_USER_IDS` (comma-separated Discord user IDs to mention in daily reminder, e.g. `123...,456...`)
 
 ## Discord permissions needed
 
@@ -58,18 +55,6 @@ Optional:
   - Posts one random valid memory with author/date/content/attachments/original link.
 
 ## Memory Vault behavior
-
-- Daily reminder at configured local time:
-
-```text
-💛 Memory Vault Time
-
-What’s one thing from today worth keeping?
-
-Use /addmemory to save it.
-
-Tiny memories count too.
-```
 
 - Favorite memories:
   - When someone reacts with `⭐` to a valid memory in Memory Vault channel,

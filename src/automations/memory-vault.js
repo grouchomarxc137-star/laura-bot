@@ -17,9 +17,6 @@ function setupMemoryVault(client) {
     guildId: process.env.GUILD_ID,
     memoryVaultChannelId: process.env.MEMORY_VAULT_CHANNEL_ID,
     timezone: process.env.TIMEZONE || 'Europe/Rome',
-    dailyHour: toSafeNumber(process.env.DAILY_MEMORY_REMINDER_HOUR, 22),
-    dailyMinute: toSafeNumber(process.env.DAILY_MEMORY_REMINDER_MINUTE, 0),
-    tagUserIds: parseUserIds(process.env.MEMORY_VAULT_TAG_USER_IDS),
   };
 
   const required = ['CLIENT_ID', 'GUILD_ID', 'MEMORY_VAULT_CHANNEL_ID'];
@@ -38,11 +35,7 @@ function setupMemoryVault(client) {
     }
 
     await registerCommands(client, config);
-    scheduleDailyReminder(client, config);
-
-    console.log(
-      `[memory-vault] Ready | timezone=${config.timezone} daily=${String(config.dailyHour).padStart(2, '0')}:${String(config.dailyMinute).padStart(2, '0')}`,
-    );
+    console.log(`[memory-vault] Ready | timezone=${config.timezone}`);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -258,38 +251,6 @@ async function threadContainsLink(thread, url) {
   }
 }
 
-function scheduleDailyReminder(client, config) {
-  const schedule = () => {
-    const delay = millisUntilNextLocalTime(config.timezone, config.dailyHour, config.dailyMinute);
-    setTimeout(async () => {
-      await sendDailyReminder(client, config);
-      schedule();
-    }, delay);
-  };
-
-  schedule();
-}
-
-async function sendDailyReminder(client, config) {
-  try {
-    const channel = await getMemoryVaultChannel(client, config.memoryVaultChannelId);
-    if (!channel) {
-      console.warn('[memory-vault] Daily reminder skipped: Memory Vault channel missing.');
-      return;
-    }
-
-    const mentions =
-      config.tagUserIds.length > 0 ? `${config.tagUserIds.map((id) => `<@${id}>`).join(' ')}\n\n` : '';
-
-    await channel.send({
-      content: `${mentions}💛 Memory Vault Time\n\nWhat’s one thing from today worth keeping?\n\nShare it here when you feel ready.\n\nTiny memories count too.`,
-      allowedMentions: { users: config.tagUserIds, parse: [] },
-    });
-  } catch (error) {
-    console.error('[memory-vault] Failed to send daily reminder:', error);
-  }
-}
-
 async function getMemoryVaultChannel(client, channelId) {
   if (!channelId) {
     return null;
@@ -385,73 +346,6 @@ function splitAttachments(message) {
   };
 }
 
-function parseUserIds(raw) {
-  if (!raw) {
-    return [];
-  }
-
-  return raw
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => /^\d{16,20}$/.test(part));
-}
-
-function millisUntilNextLocalTime(timeZone, hour, minute) {
-  const now = new Date();
-
-  for (let addDays = 0; addDays <= 2; addDays += 1) {
-    const candidate = new Date(now.getTime() + addDays * 24 * 60 * 60 * 1000);
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(candidate);
-
-    const year = Number(parts.find((p) => p.type === 'year')?.value);
-    const month = Number(parts.find((p) => p.type === 'month')?.value);
-    const day = Number(parts.find((p) => p.type === 'day')?.value);
-
-    const target = zonedTimeToUtc({ year, month, day, hour, minute, second: 0 }, timeZone);
-    if (target.getTime() > now.getTime()) {
-      return target.getTime() - now.getTime();
-    }
-  }
-
-  return 60_000;
-}
-
-function zonedTimeToUtc(parts, timeZone) {
-  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0));
-
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-
-  const asLocal = dtf.formatToParts(utcGuess);
-  const actual = {
-    year: Number(asLocal.find((p) => p.type === 'year')?.value),
-    month: Number(asLocal.find((p) => p.type === 'month')?.value),
-    day: Number(asLocal.find((p) => p.type === 'day')?.value),
-    hour: Number(asLocal.find((p) => p.type === 'hour')?.value),
-    minute: Number(asLocal.find((p) => p.type === 'minute')?.value),
-    second: Number(asLocal.find((p) => p.type === 'second')?.value),
-  };
-
-  const desiredMillis = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0);
-  const actualMillis = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second);
-  const offset = actualMillis - desiredMillis;
-
-  return new Date(utcGuess.getTime() - offset);
-}
-
 function formatDateTime(date, timezone) {
   return new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
@@ -462,11 +356,6 @@ function formatDateTime(date, timezone) {
     minute: '2-digit',
     hour12: false,
   }).format(date);
-}
-
-function toSafeNumber(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function safeAuthorName(user) {

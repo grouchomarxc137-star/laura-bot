@@ -39,7 +39,6 @@ const PLANT_SCORE_COMMAND = new SlashCommandBuilder()
   .setName('plantscore')
   .setDescription('Show the hidden plant score');
 
-const MAX_TIMEOUT_MS = 2_147_483_647;
 const CUSTOM_CHOICE_VALUE = '__custom__';
 
 const MOOD_OPTIONS = [
@@ -97,8 +96,6 @@ function setupCheckIn(client) {
     partner2Id: process.env.PARTNER_2_USER_ID,
     partner2Name: process.env.PARTNER_2_NAME || 'Partner 2',
     timezone: process.env.TIMEZONE || 'Europe/Rome',
-    hour: toSafeNumber(process.env.DAILY_CHECKIN_HOUR, 21),
-    minute: toSafeNumber(process.env.DAILY_CHECKIN_MINUTE, 0),
     relationshipChannelId: process.env.RELATIONSHIP_CHANNEL_ID || '1503325092946382868',
     relationshipChannelName: process.env.RELATIONSHIP_CHANNEL_NAME || 'our-plant',
     plantThreadName: process.env.RELATIONSHIP_PLANT_THREAD_NAME || 'Caring for our plant🪴💛',
@@ -121,11 +118,7 @@ function setupCheckIn(client) {
     }
 
     await registerCheckInCommands(config);
-    scheduleDailyCheckIn(client, config);
-
-    console.log(
-      `[check-in] Ready | channel=${config.channelId} daily=${String(config.hour).padStart(2, '0')}:${String(config.minute).padStart(2, '0')} timezone=${config.timezone}`,
-    );
+    console.log(`[check-in] Ready | channel=${config.channelId} timezone=${config.timezone}`);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -936,37 +929,6 @@ function partnerKeyByUserId(userId, config) {
   return null;
 }
 
-async function handleScheduledPost(client, config) {
-  try {
-    const channel = await getCheckInChannel(client, config.channelId);
-    if (!channel) {
-      console.warn('[check-in] Scheduled post skipped: check-in channel not found.');
-      return;
-    }
-
-    const panel = await findTodayPanel(channel, config);
-    if (panel) {
-      return;
-    }
-
-    await postDailyPanel(channel, config);
-  } catch (error) {
-    console.error('[check-in] Scheduled post failed:', error);
-  }
-}
-
-function scheduleDailyCheckIn(client, config) {
-  const schedule = () => {
-    const delay = millisUntilNextLocalTime(config.timezone, config.hour, config.minute);
-    scheduleLongTimeout(async () => {
-      await handleScheduledPost(client, config);
-      schedule();
-    }, delay);
-  };
-
-  schedule();
-}
-
 async function findTodayPanel(channel, config) {
   const date = todayISO(config.timezone);
   const messages = await fetchChannelMessages(channel, 200);
@@ -1028,78 +990,6 @@ function todayISO(timezone) {
   const month = parts.find((part) => part.type === 'month')?.value;
   const day = parts.find((part) => part.type === 'day')?.value;
   return `${year}-${month}-${day}`;
-}
-
-function millisUntilNextLocalTime(timeZone, hour, minute) {
-  const now = new Date();
-
-  for (let addDays = 0; addDays <= 2; addDays += 1) {
-    const candidate = new Date(now.getTime() + addDays * 24 * 60 * 60 * 1000);
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(candidate);
-
-    const year = Number(parts.find((p) => p.type === 'year')?.value);
-    const month = Number(parts.find((p) => p.type === 'month')?.value);
-    const day = Number(parts.find((p) => p.type === 'day')?.value);
-
-    const target = zonedTimeToUtc({ year, month, day, hour, minute, second: 0 }, timeZone);
-    if (target.getTime() > now.getTime()) {
-      return target.getTime() - now.getTime();
-    }
-  }
-
-  return 60_000;
-}
-
-function zonedTimeToUtc(parts, timeZone) {
-  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0));
-
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-
-  const local = dtf.formatToParts(utcGuess);
-  const actual = {
-    year: Number(local.find((p) => p.type === 'year')?.value),
-    month: Number(local.find((p) => p.type === 'month')?.value),
-    day: Number(local.find((p) => p.type === 'day')?.value),
-    hour: Number(local.find((p) => p.type === 'hour')?.value),
-    minute: Number(local.find((p) => p.type === 'minute')?.value),
-    second: Number(local.find((p) => p.type === 'second')?.value),
-  };
-
-  const desiredMillis = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0);
-  const actualMillis = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second);
-  const offset = actualMillis - desiredMillis;
-  return new Date(utcGuess.getTime() - offset);
-}
-
-function scheduleLongTimeout(callback, totalDelayMs) {
-  const safeDelay = Math.max(0, Number(totalDelayMs) || 0);
-  if (safeDelay <= MAX_TIMEOUT_MS) {
-    setTimeout(callback, safeDelay);
-    return;
-  }
-
-  setTimeout(() => {
-    scheduleLongTimeout(callback, safeDelay - MAX_TIMEOUT_MS);
-  }, MAX_TIMEOUT_MS);
-}
-
-function toSafeNumber(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function escapeRegExp(value) {
